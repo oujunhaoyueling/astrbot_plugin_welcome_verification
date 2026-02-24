@@ -1,6 +1,6 @@
 name: astrbot_plugin_welcome_verification
 desc: 入群欢迎与验证插件，支持自定义文本、图片，计算题验证，三次失败移出群聊
-author: YourName
+author: 月凌
 version: 1.0.0
 repo: https://github.com/oujunhaoyueling/astrbot_plugin_welcome_verification
 display_name: 入群欢迎与验证
