@@ -1,0 +1,54 @@
+{
+    "welcome_text": {
+        "description": "欢迎文本，支持 {user_name} 变量",
+        "type": "string",
+        "default": "欢迎 {user_name} 加入本群！"
+    },
+    "enable_welcome_image": {
+        "description": "是否发送欢迎图片",
+        "type": "bool",
+        "default": false
+    },
+    "welcome_image": {
+        "description": "欢迎图片路径（本地绝对路径或http/https链接）",
+        "type": "string",
+        "default": ""
+    },
+    "enable_verification": {
+        "description": "是否开启入群验证",
+        "type": "bool",
+        "default": true
+    },
+    "verification_timeout": {
+        "description": "验证超时时间（秒）",
+        "type": "int",
+        "default": 300,
+        "hint": "超过此时间未回答将视为失败一次"
+    },
+    "verification_max_attempts": {
+        "description": "最大尝试次数",
+        "type": "int",
+        "default": 3,
+        "hint": "超过此次数将移出群聊"
+    },
+    "verification_question_format": {
+        "description": "验证问题格式，支持 {question} 变量",
+        "type": "string",
+        "default": "请回答：{question} = ?"
+    },
+    "verification_correct_message": {
+        "description": "验证成功消息",
+        "type": "string",
+        "default": "验证通过，欢迎入群！"
+    },
+    "verification_failed_message": {
+        "description": "验证失败提示，支持 {remaining} 变量",
+        "type": "string",
+        "default": "答案错误，您还有 {remaining} 次机会。"
+    },
+    "verification_ban_message": {
+        "description": "验证失败三次被移出时的提示",
+        "type": "string",
+        "default": "您已超过最大尝试次数，将被移出群聊。"
+    }
+}
