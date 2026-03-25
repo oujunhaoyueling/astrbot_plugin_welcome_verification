@@ -20,35 +20,83 @@
         "default": true
     },
     "verification_timeout": {
-        "description": "验证超时时间（秒）",
+        "description": "主验证超时时间（秒）",
         "type": "int",
         "default": 300,
         "hint": "超过此时间未回答将视为失败一次"
     },
     "verification_max_attempts": {
-        "description": "最大尝试次数",
+        "description": "主验证最大尝试次数",
         "type": "int",
         "default": 3,
-        "hint": "超过此次数将移出群聊"
+        "hint": "超过此次数将进入二级验证或直接踢出"
     },
     "verification_question_format": {
-        "description": "验证问题格式，支持 {question} 变量",
+        "description": "主验证问题格式，支持 {question} 变量",
         "type": "string",
         "default": "请回答：{question} = ?"
     },
     "verification_correct_message": {
-        "description": "验证成功消息",
+        "description": "主验证成功消息",
         "type": "string",
         "default": "验证通过，欢迎入群！"
     },
     "verification_failed_message": {
-        "description": "验证失败提示，支持 {remaining} 变量",
+        "description": "主验证失败提示，支持 {remaining} 变量",
         "type": "string",
         "default": "答案错误，您还有 {remaining} 次机会。"
     },
     "verification_ban_message": {
-        "description": "验证失败三次被移出时的提示",
+        "description": "主验证失败且未开启二级验证时的踢出提示",
         "type": "string",
         "default": "您已超过最大尝试次数，将被移出群聊。"
+    },
+    "secondary_verification_enabled": {
+        "description": "是否启用二级验证（主验证失败后进入）",
+        "type": "bool",
+        "default": true
+    },
+    "secondary_verification_timeout": {
+        "description": "二级验证等待时间（秒）",
+        "type": "int",
+        "default": 60,
+        "hint": "管理员/群主在此时间内回答正确则通过"
+    },
+    "secondary_verification_question": {
+        "description": "二级验证问题格式，支持 {question} 和 {user_name} 变量",
+        "type": "string",
+        "default": "请 @{user_name} 并回答：{question} = ?"
+    },
+    "secondary_verification_correct_message": {
+        "description": "二级验证通过消息",
+        "type": "string",
+        "default": "二级验证通过，欢迎入群！"
+    },
+    "secondary_verification_failed_message": {
+        "description": "二级验证超时提示",
+        "type": "string",
+        "default": "二级验证超时，将通知管理员。"
+    },
+    "warning_owner_message": {
+        "description": "私信群主的警告内容，支持 {user_name}, {user_id}, {group_name}",
+        "type": "string",
+        "default": "【风险提示】群内有新成员 {user_name}({user_id}) 未通过验证，请处理。"
+    },
+    "warning_admin_message": {
+        "description": "私信管理员的警告内容，支持 {user_name}, {user_id}, {group_name}",
+        "type": "string",
+        "default": "【风险提示】群 {group_name} 内有新成员 {user_name}({user_id}) 未通过验证，请处理。"
+    },
+    "warning_check_interval": {
+        "description": "警告循环中检查成员是否在群的时间间隔（秒）",
+        "type": "int",
+        "default": 10,
+        "hint": "每次发送警告后等待此时间再检查成员是否被移出"
+    },
+    "warning_cycle_max": {
+        "description": "最大警告循环次数（防止无限循环）",
+        "type": "int",
+        "default": 10,
+        "hint": "超过此次数后停止通知"
     }
 }
