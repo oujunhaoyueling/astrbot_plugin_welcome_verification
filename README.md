@@ -47,9 +47,9 @@
 插件支持使用 JSON 格式的静态题库，题库文件需存放在 `data/welcome_verification/warehouse/` 目录下，格式如下：
 ```json
 [
-    {\"question\": \"1 + 1\", \"answer\": 2},
-    {\"question\": \"2 × 3\", \"answer\": 6},
-    {\"question\": \"10 - 4\", \"answer\": 6}
+    {"question": "1 + 1", "answer": 2},
+    {"question": "2 × 3", "answer": 6},
+    {"question": "10 - 4", "answer": 6}
 ]
 ```
 ### 命令说明
