@@ -8,31 +8,20 @@ from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star, register
 from astrbot.api import logger
 from astrbot.api.message_components import At, Plain, Image
-
-try:
-    from astrbot.core import DATA_DIR as CORE_DATA_DIR
-except ImportError:
-    CORE_DATA_DIR = None
+from astrbot.core.star.star_tools import StarTools
 
 @register("astrbot_plugin_welcome_verification", "YourName", "入群欢迎与验证插件", "2.0.0")
 class WelcomeVerificationPlugin(Star):
     def __init__(self, context: Context, config: dict):
         super().__init__(context)
         self.config = config
+        # 状态存储，键为 f"{group_id}:{user_id}"
         self.user_states: Dict[str, dict] = {}
         self.secondary_tasks: Dict[str, asyncio.Task] = {}
         self._lock = asyncio.Lock()
 
-        # 确定数据根目录
-        if CORE_DATA_DIR and os.path.exists(CORE_DATA_DIR):
-            data_root = CORE_DATA_DIR
-        elif hasattr(context, 'data_dir') and context.data_dir:
-            data_root = context.data_dir
-        else:
-            data_root = os.path.join(os.path.dirname(__file__), 'data')
-            logger.warning(f"未找到 AstrBot 数据目录，将使用插件自身目录下的 data 文件夹: {data_root}")
-
-        self.data_dir = os.path.join(data_root, "welcome_verification")
+        # 获取插件数据目录
+        self.data_dir = StarTools.get_data_dir("welcome_verification")
         self.warehouse_dir = os.path.join(self.data_dir, "warehouse")
         self.config_file = os.path.join(self.data_dir, "group_config.json")
 
@@ -47,6 +36,7 @@ class WelcomeVerificationPlugin(Star):
         self._load_group_configs()
         self._load_all_question_banks()
 
+    # ==================== 持久化相关 ====================
     def _load_group_configs(self):
         try:
             if os.path.exists(self.config_file):
@@ -54,7 +44,7 @@ class WelcomeVerificationPlugin(Star):
                     self.group_configs = json.load(f)
             else:
                 self.group_configs = {}
-        except Exception as e:
+        except (json.JSONDecodeError, OSError) as e:
             logger.error(f"加载群配置失败: {e}")
             self.group_configs = {}
 
@@ -62,7 +52,7 @@ class WelcomeVerificationPlugin(Star):
         try:
             with open(self.config_file, 'w', encoding='utf-8') as f:
                 json.dump(self.group_configs, f, ensure_ascii=False, indent=2)
-        except Exception as e:
+        except OSError as e:
             logger.error(f"保存群配置失败: {e}")
 
     def _load_all_question_banks(self):
@@ -74,12 +64,12 @@ class WelcomeVerificationPlugin(Star):
                 try:
                     with open(filepath, 'r', encoding='utf-8') as f:
                         data = json.load(f)
-                        if isinstance(data, list) and all('question' in item and 'answer' in item for item in data):
-                            self.question_banks[filename] = data
-                            logger.info(f"加载题库 {filename}，共 {len(data)} 题")
-                        else:
-                            logger.warning(f"题库 {filename} 格式错误，跳过")
-                except Exception as e:
+                    if isinstance(data, list) and all('question' in item and 'answer' in item for item in data):
+                        self.question_banks[filename] = data
+                        logger.info(f"加载题库 {filename}，共 {len(data)} 题")
+                    else:
+                        logger.warning(f"题库 {filename} 格式错误，跳过")
+                except (json.JSONDecodeError, OSError) as e:
                     logger.error(f"加载题库 {filename} 失败: {e}")
 
     def _get_group_question_bank(self, group_id: str) -> Optional[str]:
@@ -92,6 +82,7 @@ class WelcomeVerificationPlugin(Star):
         self.group_configs[gid]["question_bank"] = bank_name
         self._save_group_configs()
 
+    # ==================== 题库相关 ====================
     async def _get_question_for_group(self, group_id: int) -> Tuple[str, int]:
         bank_name = self._get_group_question_bank(str(group_id))
         if bank_name and bank_name in self.question_banks:
@@ -102,6 +93,7 @@ class WelcomeVerificationPlugin(Star):
                 return item["question"], item["answer"]
         return self._generate_question()
 
+    # ==================== 命令处理 ====================
     async def _handle_wv_command(self, event: AstrMessageEvent):
         msg = event.message_str.strip()
         if not msg.startswith("wv"):
@@ -159,17 +151,22 @@ class WelcomeVerificationPlugin(Star):
             await event.send(event.plain_result(f"已切换题库为 {bank_name}，共 {len(self.question_banks[bank_name])} 道题。"))
             return
 
+    # ==================== 事件监听 ====================
     @filter.event_message_type(filter.EventMessageType.ALL)
     async def on_group_increase(self, event: AstrMessageEvent):
         if not self._is_group_increase(event):
             return
+
         user_id = event.get_sender_id()
         group_id = event.message_obj.group_id
         user_name = event.get_sender_name()
+
         logger.info(f"新成员入群: {user_name}({user_id}) 进入群 {group_id}")
+
         await self._send_welcome(event, user_name)
+
         if self.config.get("enable_verification", True):
-            await self._start_verification(event, user_id, group_id)
+            asyncio.create_task(self._start_verification(event, user_id, group_id))
 
     @filter.event_message_type(filter.EventMessageType.ALL)
     async def on_message(self, event: AstrMessageEvent):
@@ -179,6 +176,7 @@ class WelcomeVerificationPlugin(Star):
         await self._check_answer(event)
         await self._check_secondary_answer(event)
 
+    # ==================== 辅助方法 ====================
     def _is_group_increase(self, event: AstrMessageEvent) -> bool:
         if event.get_platform_name() != "aiocqhttp":
             return False
@@ -212,10 +210,14 @@ class WelcomeVerificationPlugin(Star):
                 chain.append(Image.fromFileSystem(image_path))
         await event.send(event.chain_result(chain))
 
-    async def _start_verification(self, event: AstrMessageEvent, user_id: str, group_id: str):
+    # ==================== 主验证流程 ====================
+    async def _start_verification(self, event: AstrMessageEvent, user_id: str, group_id: int):
         max_attempts = self.config.get("verification_max_attempts", 3)
         timeout = self.config.get("verification_timeout", 300)
+
         attempts = 0
+        key = f"{group_id}:{user_id}"
+
         while attempts < max_attempts:
             question, answer = await self._get_question_for_group(group_id)
             question_text = self.config.get("verification_question_format", "请回答：{question} = ?").format(question=question)
@@ -223,20 +225,23 @@ class WelcomeVerificationPlugin(Star):
 
             future = asyncio.get_event_loop().create_future()
             expire_time = asyncio.get_event_loop().time() + timeout
+
             async with self._lock:
-                self.user_states[user_id] = {
+                self.user_states[key] = {
                     "group_id": group_id,
+                    "user_id": user_id,
                     "attempts": attempts,
                     "expire_time": expire_time,
                     "current_answer": answer,
                     "future": future
                 }
+
             try:
                 is_correct = await asyncio.wait_for(future, timeout)
                 if is_correct:
                     await event.send(event.plain_result(self.config.get("verification_correct_message", "验证通过，欢迎入群！")))
                     async with self._lock:
-                        self.user_states.pop(user_id, None)
+                        self.user_states.pop(key, None)
                     return
                 else:
                     attempts += 1
@@ -257,39 +262,54 @@ class WelcomeVerificationPlugin(Star):
                     return
             finally:
                 async with self._lock:
-                    if user_id in self.user_states:
-                        self.user_states[user_id].pop("future", None)
+                    if key in self.user_states:
+                        self.user_states[key].pop("future", None)
 
     async def _check_answer(self, event: AstrMessageEvent):
         user_id = event.get_sender_id()
+        group_id = event.message_obj.group_id
+        key = f"{group_id}:{user_id}"
+
         async with self._lock:
-            state = self.user_states.get(user_id)
+            state = self.user_states.get(key)
             if not state or "future" not in state:
                 return
             if state.get("expire_time") and asyncio.get_event_loop().time() > state["expire_time"]:
                 return
+
             user_input = event.message_str.strip()
             if not user_input.isdigit():
-                await event.send(event.plain_result("请输入数字答案。"))
+                # 发送提示消息移出锁外
+                # 先释放锁再发送
+                future = None
+            else:
+                answer = int(user_input)
+                correct = state["current_answer"]
+                future = state.get("future")
+                if future and not future.done():
+                    future.set_result(answer == correct)
+                # 设置结果后无需其他操作
                 return
-            answer = int(user_input)
-            correct = state["current_answer"]
-            future = state.get("future")
-            if future and not future.done():
-                future.set_result(answer == correct)
 
-    async def _secondary_verification(self, event: AstrMessageEvent, user_id: str, group_id: str):
+        # 锁已释放，发送提示
+        if not user_input.isdigit():
+            await event.send(event.plain_result("请输入数字答案。"))
+
+    # ==================== 二级验证与警告 ====================
+    async def _secondary_verification(self, event: AstrMessageEvent, user_id: str, group_id: int):
         if not self.config.get("secondary_verification_enabled", True):
             await self._kick_user(event, user_id)
             await event.send(event.plain_result(self.config.get("verification_ban_message", "您已超过最大尝试次数，将被移出群聊。")))
             async with self._lock:
-                self.user_states.pop(user_id, None)
+                self.user_states.pop(f"{group_id}:{user_id}", None)
             return
 
         owner, admins = await self._get_group_owner_and_admins(event, group_id)
         if not owner and not admins:
             logger.warning(f"无法获取群 {group_id} 的管理员/群主，直接踢出用户 {user_id}")
             await self._kick_user(event, user_id)
+            async with self._lock:
+                self.user_states.pop(f"{group_id}:{user_id}", None)
             return
 
         question, answer = await self._get_question_for_group(group_id)
@@ -306,52 +326,72 @@ class WelcomeVerificationPlugin(Star):
 
         future = asyncio.get_event_loop().create_future()
         timeout = self.config.get("secondary_verification_timeout", 60)
+        key = f"{group_id}:{user_id}"
+
         async with self._lock:
-            self.user_states[user_id] = {
+            self.user_states[key] = {
                 "group_id": group_id,
+                "user_id": user_id,
                 "secondary_answer": answer,
                 "secondary_future": future,
                 "secondary_expire": asyncio.get_event_loop().time() + timeout
             }
+
         try:
             is_correct = await asyncio.wait_for(future, timeout)
             if is_correct:
                 await event.send(event.plain_result(self.config.get("secondary_verification_correct_message", "二级验证通过，欢迎入群！")))
                 async with self._lock:
-                    self.user_states.pop(user_id, None)
+                    self.user_states.pop(key, None)
                 return
         except asyncio.TimeoutError:
             await event.send(event.plain_result(self.config.get("secondary_verification_failed_message", "二级验证超时，将通知管理员。")))
         finally:
             async with self._lock:
-                if user_id in self.user_states:
-                    self.user_states[user_id].pop("secondary_future", None)
-                if user_id in self.user_states and "secondary_future" not in self.user_states[user_id]:
-                    self.user_states.pop(user_id, None)
+                if key in self.user_states:
+                    self.user_states[key].pop("secondary_future", None)
+                if key in self.user_states and "secondary_future" not in self.user_states[key]:
+                    self.user_states.pop(key, None)
 
+        # 启动警告循环（后台任务）
         check_interval = self.config.get("warning_check_interval", 10)
         max_notifications = self.config.get("warning_cycle_max", 10)
         task = asyncio.create_task(self._warning_loop(event, user_id, group_id, owner, admins, check_interval, max_notifications))
         async with self._lock:
-            self.secondary_tasks[user_id] = task
+            self.secondary_tasks[key] = task
+        # 任务完成后清理字典
+        task.add_done_callback(lambda t, k=key: self._schedule_cleanup(k))
+
+    def _schedule_cleanup(self, key: str):
+        # 异步调度清理，避免在回调中直接使用 await
+        asyncio.create_task(self._clean_secondary_task(key))
+
+    async def _clean_secondary_task(self, key: str):
+        async with self._lock:
+            self.secondary_tasks.pop(key, None)
 
     async def _check_secondary_answer(self, event: AstrMessageEvent):
         group_id = event.message_obj.group_id
-        at_targets = [comp.qq for comp in event.message_obj.message if isinstance(comp, At)]
+        # 获取所有 At 对象，统一转为字符串
+        at_targets = [str(comp.qq) for comp in event.message_obj.message if isinstance(comp, At)]
 
+        # 查找匹配的目标状态
+        target_key = None
+        target_state = None
         async with self._lock:
-            target_user_id = None
-            target_state = None
-            for uid, state in self.user_states.items():
-                if state.get("group_id") == group_id and "secondary_future" in state and uid in at_targets:
-                    target_user_id = uid
-                    target_state = state
-                    break
+            for key, state in self.user_states.items():
+                if state.get("group_id") == group_id and "secondary_future" in state:
+                    uid = state.get("user_id")
+                    if uid and uid in at_targets:
+                        target_key = key
+                        target_state = state
+                        break
             if not target_state:
                 return
             correct = target_state["secondary_answer"]
             future = target_state.get("secondary_future")
 
+        # 权限检查（API 调用在锁外）
         owner, admins = await self._get_group_owner_and_admins(event, group_id)
         sender = event.get_sender_id()
         is_authorized = (owner == sender) or (sender in admins)
@@ -363,6 +403,7 @@ class WelcomeVerificationPlugin(Star):
         if not user_input.isdigit():
             await event.send(event.plain_result("请输入数字答案。"))
             return
+
         answer = int(user_input)
         if future and not future.done():
             if answer == correct:
@@ -392,28 +433,43 @@ class WelcomeVerificationPlugin(Star):
     async def _warning_loop(self, event: AstrMessageEvent, user_id: str, group_id: int,
                            owner: Optional[str], admins: List[str],
                            check_interval: int, max_notifications: int):
-        if owner:
-            await self._send_warning_private(event, owner, user_id, group_id, is_owner=True)
-            await asyncio.sleep(check_interval)
-            if not await self._is_member_in_group(event, group_id, user_id):
-                logger.info(f"用户 {user_id} 已被移出，停止警告循环")
+        try:
+            if owner:
+                await self._send_warning_private(event, owner, user_id, group_id, is_owner=True)
+                await asyncio.sleep(check_interval)
+                if not await self._is_member_in_group(event, group_id, user_id):
+                    logger.info(f"用户 {user_id} 已被移出，停止警告循环")
+                    return
+
+            if not admins:
+                logger.info(f"群 {group_id} 无管理员，警告循环结束")
                 return
 
-        notified_admins = set()
-        notifications_sent = 0
-        while notifications_sent < max_notifications:
-            available = [aid for aid in admins if aid not in notified_admins]
-            if not available:
-                notified_admins.clear()
-                available = admins[:]
-            chosen = random.choice(available)
-            notified_admins.add(chosen)
-            await self._send_warning_private(event, chosen, user_id, group_id, is_owner=False)
-            notifications_sent += 1
-            await asyncio.sleep(check_interval)
-            if not await self._is_member_in_group(event, group_id, user_id):
-                logger.info(f"用户 {user_id} 已被移出，停止警告循环")
-                return
+            notified_admins = set()
+            notifications_sent = 0
+            while notifications_sent < max_notifications:
+                available = [aid for aid in admins if aid not in notified_admins]
+                if not available:
+                    notified_admins.clear()
+                    available = admins[:]
+                chosen = random.choice(available)
+                notified_admins.add(chosen)
+
+                await self._send_warning_private(event, chosen, user_id, group_id, is_owner=False)
+                notifications_sent += 1
+                await asyncio.sleep(check_interval)
+
+                if not await self._is_member_in_group(event, group_id, user_id):
+                    logger.info(f"用户 {user_id} 已被移出，停止警告循环")
+                    return
+        finally:
+            # 清理状态
+            key = f"{group_id}:{user_id}"
+            async with self._lock:
+                self.secondary_tasks.pop(key, None)
+                # 如果二级验证状态还在，也清理掉
+                if key in self.user_states and "secondary_future" in self.user_states.get(key, {}):
+                    self.user_states.pop(key, None)
 
     async def _send_warning_private(self, event: AstrMessageEvent, target_id: str,
                                    user_id: str, group_id: int, is_owner: bool):
@@ -423,18 +479,18 @@ class WelcomeVerificationPlugin(Star):
                 group_info = await event.bot.api.call_action('get_group_info', group_id=group_id)
                 if group_info and isinstance(group_info, dict):
                     group_name = group_info.get('group_name', group_name)
-            except:
-                pass
+            except Exception as e:
+                logger.debug(f"获取群名称失败: {e}")
 
             user_name = "新成员"
             try:
                 member_info = await event.bot.api.call_action('get_group_member_info',
                                                               group_id=group_id,
-                                                              user_id=user_id)
+                                                              user_id=int(user_id))
                 if member_info and isinstance(member_info, dict):
                     user_name = member_info.get('nickname', user_name)
-            except:
-                pass
+            except Exception as e:
+                logger.debug(f"获取成员昵称失败: {e}")
 
             if is_owner:
                 msg_template = self.config.get("warning_owner_message",
@@ -452,44 +508,68 @@ class WelcomeVerificationPlugin(Star):
         except Exception as e:
             logger.error(f"发送私信警告失败: {e}")
 
+    # ==================== 随机生成题目 ====================
     def _generate_question(self):
         operators = ['+', '-', '*']
         for _ in range(100):
             op1 = random.choice(operators)
             op2 = random.choice(operators)
             if op1 == '*' or op2 == '*':
-                a, b, c = random.randint(1, 10), random.randint(1, 10), random.randint(1, 10)
+                a = random.randint(1, 10)
+                b = random.randint(1, 10)
+                c = random.randint(1, 10)
             else:
-                a, b, c = random.randint(0, 50), random.randint(0, 50), random.randint(0, 50)
-            expr = f"{a} {op1} {b} {op2} {c}"
+                a = random.randint(0, 50)
+                b = random.randint(0, 50)
+                c = random.randint(0, 50)
+
             try:
-                result = eval(expr)
-                if 0 <= result <= 100 and isinstance(result, int):
+                if op1 == '+':
+                    part1 = a + b
+                elif op1 == '-':
+                    part1 = a - b
+                else:
+                    part1 = a * b
+
+                if op2 == '+':
+                    result = part1 + c
+                elif op2 == '-':
+                    result = part1 - c
+                else:
+                    result = part1 * c
+
+                if 0 <= result <= 100:
+                    expr = f"{a} {op1} {b} {op2} {c}"
                     return expr, result
             except:
                 continue
-        a, b = random.randint(0, 50), random.randint(0, 50)
+        a = random.randint(0, 50)
+        b = random.randint(0, 50)
         return f"{a} + {b}", a + b
 
+    # ==================== 踢人操作 ====================
     async def _kick_user(self, event: AstrMessageEvent, user_id: str):
         if event.get_platform_name() != "aiocqhttp":
             logger.warning(f"当前平台不支持踢人操作，无法移出用户 {user_id}")
             return
+
         group_id = event.message_obj.group_id
         if not group_id:
             logger.error("无法获取群ID，踢人失败")
             return
+
         try:
             await event.bot.api.call_action(
                 'set_group_kick',
                 group_id=group_id,
-                user_id=user_id,
+                user_id=int(user_id),
                 reject_add_request=False
             )
             logger.info(f"已将用户 {user_id} 移出群 {group_id}")
         except Exception as e:
             logger.error(f"踢出用户失败: {e}")
 
+    # ==================== 插件清理 ====================
     async def terminate(self):
         async with self._lock:
             for state in self.user_states.values():
