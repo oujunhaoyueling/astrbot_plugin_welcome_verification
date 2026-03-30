@@ -1,7 +1,7 @@
 import random
 import asyncio
 import json
-import os
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from astrbot.api.event import filter, AstrMessageEvent
@@ -10,7 +10,7 @@ from astrbot.api import logger
 from astrbot.api.message_components import At, Plain, Image
 from astrbot.core.star.star_tools import StarTools
 
-@register("astrbot_plugin_welcome_verification", "YourName", "入群欢迎与验证插件", "2.0.0")
+@register("astrbot_plugin_welcome_verification", "月凌", "入群欢迎与验证插件", "2.1.0")
 class WelcomeVerificationPlugin(Star):
     def __init__(self, context: Context, config: dict):
         super().__init__(context)
@@ -18,16 +18,17 @@ class WelcomeVerificationPlugin(Star):
         # 状态存储，键为 f"{group_id}:{user_id}"
         self.user_states: Dict[str, dict] = {}
         self.secondary_tasks: Dict[str, asyncio.Task] = {}
+        self.timeout_kick_tasks: Dict[str, asyncio.Task] = {}  # 存储踢人等待任务
         self._lock = asyncio.Lock()
 
-        # 获取插件数据目录
-        self.data_dir = StarTools.get_data_dir("welcome_verification")
-        self.warehouse_dir = os.path.join(self.data_dir, "warehouse")
-        self.config_file = os.path.join(self.data_dir, "group_config.json")
+        # 持久化路径（使用 AstrBot 规范）
+        self.data_dir: Path = StarTools.get_data_dir("welcome_verification")
+        self.warehouse_dir = self.data_dir / "warehouse"
+        self.config_file = self.data_dir / "group_config.json"
 
         try:
-            os.makedirs(self.data_dir, exist_ok=True)
-            os.makedirs(self.warehouse_dir, exist_ok=True)
+            self.data_dir.mkdir(parents=True, exist_ok=True)
+            self.warehouse_dir.mkdir(exist_ok=True)
         except Exception as e:
             logger.error(f"创建数据目录失败: {e}，插件将无法持久化数据")
 
@@ -39,7 +40,7 @@ class WelcomeVerificationPlugin(Star):
     # ==================== 持久化相关 ====================
     def _load_group_configs(self):
         try:
-            if os.path.exists(self.config_file):
+            if self.config_file.exists():
                 with open(self.config_file, 'r', encoding='utf-8') as f:
                     self.group_configs = json.load(f)
             else:
@@ -56,21 +57,19 @@ class WelcomeVerificationPlugin(Star):
             logger.error(f"保存群配置失败: {e}")
 
     def _load_all_question_banks(self):
-        if not os.path.exists(self.warehouse_dir):
+        if not self.warehouse_dir.exists():
             return
-        for filename in os.listdir(self.warehouse_dir):
-            if filename.endswith('.json'):
-                filepath = os.path.join(self.warehouse_dir, filename)
-                try:
-                    with open(filepath, 'r', encoding='utf-8') as f:
-                        data = json.load(f)
-                    if isinstance(data, list) and all('question' in item and 'answer' in item for item in data):
-                        self.question_banks[filename] = data
-                        logger.info(f"加载题库 {filename}，共 {len(data)} 题")
-                    else:
-                        logger.warning(f"题库 {filename} 格式错误，跳过")
-                except (json.JSONDecodeError, OSError) as e:
-                    logger.error(f"加载题库 {filename} 失败: {e}")
+        for file in self.warehouse_dir.glob("*.json"):
+            try:
+                with open(file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                if isinstance(data, list) and all('question' in item and 'answer' in item for item in data):
+                    self.question_banks[file.name] = data
+                    logger.info(f"加载题库 {file.name}，共 {len(data)} 题")
+                else:
+                    logger.warning(f"题库 {file.name} 格式错误，跳过")
+            except (json.JSONDecodeError, OSError) as e:
+                logger.error(f"加载题库 {file.name} 失败: {e}")
 
     def _get_group_question_bank(self, group_id: str) -> Optional[str]:
         return self.group_configs.get(str(group_id), {}).get("question_bank")
@@ -125,7 +124,7 @@ class WelcomeVerificationPlugin(Star):
             if banks:
                 msg = "可用题库：\n" + "\n".join(f"- {name} ({len(self.question_banks[name])}题)" for name in banks)
             else:
-                msg = "没有发现任何题库文件，请将 JSON 格式的题库放入 data/welcome_verification/warehouse/ 文件夹。"
+                msg = "没有发现任何可用题库文件，请将 JSON 格式的题库放入 AstrBot/data/plugin_data/welcome_verification/warehouse/ 文件夹并重载插件"
             await event.send(event.plain_result(msg))
             return
 
@@ -175,6 +174,7 @@ class WelcomeVerificationPlugin(Star):
         await self._handle_wv_command(event)
         await self._check_answer(event)
         await self._check_secondary_answer(event)
+        await self._check_cancel_command(event)  # 处理取消踢人命令
 
     # ==================== 辅助方法 ====================
     def _is_group_increase(self, event: AstrMessageEvent) -> bool:
@@ -250,7 +250,11 @@ class WelcomeVerificationPlugin(Star):
                         msg = self.config.get("verification_failed_message", "答案错误，您还有 {remaining} 次机会。").format(remaining=remaining)
                         await event.send(event.plain_result(msg))
                     else:
-                        await self._secondary_verification(event, user_id, group_id)
+                        # 主验证失败，根据配置决定是否启用二级验证
+                        if self.config.get("secondary_verification_enabled", True):
+                            await self._secondary_verification(event, user_id, group_id)
+                        else:
+                            await self._schedule_timeout_kick(event, user_id, group_id)
                         return
             except asyncio.TimeoutError:
                 attempts += 1
@@ -258,7 +262,10 @@ class WelcomeVerificationPlugin(Star):
                 if remaining > 0:
                     await event.send(event.plain_result(f"验证超时，您还有 {remaining} 次机会。"))
                 else:
-                    await self._secondary_verification(event, user_id, group_id)
+                    if self.config.get("secondary_verification_enabled", True):
+                        await self._secondary_verification(event, user_id, group_id)
+                    else:
+                        await self._schedule_timeout_kick(event, user_id, group_id)
                     return
             finally:
                 async with self._lock:
@@ -279,8 +286,7 @@ class WelcomeVerificationPlugin(Star):
 
             user_input = event.message_str.strip()
             if not user_input.isdigit():
-                # 发送提示消息移出锁外
-                # 先释放锁再发送
+                # 发送提示移出锁外
                 future = None
             else:
                 answer = int(user_input)
@@ -288,28 +294,21 @@ class WelcomeVerificationPlugin(Star):
                 future = state.get("future")
                 if future and not future.done():
                     future.set_result(answer == correct)
-                # 设置结果后无需其他操作
                 return
 
-        # 锁已释放，发送提示
         if not user_input.isdigit():
             await event.send(event.plain_result("请输入数字答案。"))
 
     # ==================== 二级验证与警告 ====================
     async def _secondary_verification(self, event: AstrMessageEvent, user_id: str, group_id: int):
         if not self.config.get("secondary_verification_enabled", True):
-            await self._kick_user(event, user_id)
-            await event.send(event.plain_result(self.config.get("verification_ban_message", "您已超过最大尝试次数，将被移出群聊。")))
-            async with self._lock:
-                self.user_states.pop(f"{group_id}:{user_id}", None)
+            await self._schedule_timeout_kick(event, user_id, group_id)
             return
 
         owner, admins = await self._get_group_owner_and_admins(event, group_id)
         if not owner and not admins:
             logger.warning(f"无法获取群 {group_id} 的管理员/群主，直接踢出用户 {user_id}")
-            await self._kick_user(event, user_id)
-            async with self._lock:
-                self.user_states.pop(f"{group_id}:{user_id}", None)
+            await self._schedule_timeout_kick(event, user_id, group_id)
             return
 
         question, answer = await self._get_question_for_group(group_id)
@@ -353,32 +352,16 @@ class WelcomeVerificationPlugin(Star):
                 if key in self.user_states and "secondary_future" not in self.user_states[key]:
                     self.user_states.pop(key, None)
 
-        # 启动警告循环（后台任务）
-        check_interval = self.config.get("warning_check_interval", 10)
-        max_notifications = self.config.get("warning_cycle_max", 10)
-        task = asyncio.create_task(self._warning_loop(event, user_id, group_id, owner, admins, check_interval, max_notifications))
-        async with self._lock:
-            self.secondary_tasks[key] = task
-        # 任务完成后清理字典
-        task.add_done_callback(lambda t, k=key: self._schedule_cleanup(k))
-
-    def _schedule_cleanup(self, key: str):
-        # 异步调度清理，避免在回调中直接使用 await
-        asyncio.create_task(self._clean_secondary_task(key))
-
-    async def _clean_secondary_task(self, key: str):
-        async with self._lock:
-            self.secondary_tasks.pop(key, None)
+        # 二级验证失败，进入超时踢人流程
+        await self._schedule_timeout_kick(event, user_id, group_id)
 
     async def _check_secondary_answer(self, event: AstrMessageEvent):
         group_id = event.message_obj.group_id
-        # 获取所有 At 对象，统一转为字符串
         at_targets = [str(comp.qq) for comp in event.message_obj.message if isinstance(comp, At)]
 
-        # 查找匹配的目标状态
-        target_key = None
-        target_state = None
         async with self._lock:
+            target_key = None
+            target_state = None
             for key, state in self.user_states.items():
                 if state.get("group_id") == group_id and "secondary_future" in state:
                     uid = state.get("user_id")
@@ -391,7 +374,6 @@ class WelcomeVerificationPlugin(Star):
             correct = target_state["secondary_answer"]
             future = target_state.get("secondary_future")
 
-        # 权限检查（API 调用在锁外）
         owner, admins = await self._get_group_owner_and_admins(event, group_id)
         sender = event.get_sender_id()
         is_authorized = (owner == sender) or (sender in admins)
@@ -430,83 +412,171 @@ class WelcomeVerificationPlugin(Star):
             logger.error(f"获取群 {group_id} 管理员列表失败: {e}")
             return None, []
 
-    async def _warning_loop(self, event: AstrMessageEvent, user_id: str, group_id: int,
-                           owner: Optional[str], admins: List[str],
-                           check_interval: int, max_notifications: int):
+    # ==================== 超时踢人流程 ====================
+    async def _schedule_timeout_kick(self, event: AstrMessageEvent, user_id: str, group_id: int):
+        """安排超时踢人任务（如果启用）"""
+        if not self.config.get("timeout_kick_enabled", True):
+            # 直接踢人并发送提示
+            kick_msg = self.config.get("timeout_kick_immediate_message", "验证失败，您已被移出群聊。")
+            await event.send(event.plain_result(kick_msg))
+            await self._kick_user(event, user_id)
+            return
+
+        key = f"{group_id}:{user_id}"
+        # 如果已经有任务，先取消旧任务
+        async with self._lock:
+            old_task = self.timeout_kick_tasks.get(key)
+            if old_task and not old_task.done():
+                old_task.cancel()
+            # 创建新任务
+            task = asyncio.create_task(self._timeout_kick_process(event, user_id, group_id))
+            self.timeout_kick_tasks[key] = task
+            # 任务结束后自动清理
+            task.add_done_callback(lambda t, k=key: asyncio.create_task(self._clean_timeout_task(k)))
+
+    async def _clean_timeout_task(self, key: str):
+        """清理踢人等待任务记录"""
+        await asyncio.sleep(0)
+        async with self._lock:
+            self.timeout_kick_tasks.pop(key, None)
+
+    async def _timeout_kick_process(self, event: AstrMessageEvent, user_id: str, group_id: int):
+        """超时踢人等待过程"""
+        # 提前检查机器人权限，若没有权限则直接结束
+        if not await self._check_bot_admin(event, group_id):
+            await event.send(event.plain_result("机器人没有管理员权限，无法移出用户。"))
+            return
+
+        # 获取延迟时间
+        delay = self.config.get("timeout_kick_delay", 30)
+        # 获取提示文本模板
+        warning_template = self.config.get(
+            "timeout_kick_warning_message",
+            "用户 {user_name} 验证失败，将在 {delay} 秒后被移出群聊。如需取消，请管理员发送：{cancel_command} @用户"
+        )
+
+        # 获取用户昵称
+        user_name = "该成员"
         try:
-            if owner:
-                await self._send_warning_private(event, owner, user_id, group_id, is_owner=True)
-                await asyncio.sleep(check_interval)
-                if not await self._is_member_in_group(event, group_id, user_id):
-                    logger.info(f"用户 {user_id} 已被移出，停止警告循环")
-                    return
+            member_info = await event.bot.api.call_action('get_group_member_info',
+                                                          group_id=group_id,
+                                                          user_id=int(user_id))
+            if member_info and isinstance(member_info, dict):
+                user_name = member_info.get('nickname', user_name)
+        except Exception:
+            pass
 
-            if not admins:
-                logger.info(f"群 {group_id} 无管理员，警告循环结束")
-                return
+        cancel_cmd = self.config.get("timeout_kick_cancel_command", "/cancel_kick")
+        warning_msg = warning_template.format(
+            user_name=user_name,
+            delay=delay,
+            cancel_command=cancel_cmd
+        )
+        # 发送警告消息
+        await event.send(event.plain_result(warning_msg))
 
-            notified_admins = set()
-            notifications_sent = 0
-            while notifications_sent < max_notifications:
-                available = [aid for aid in admins if aid not in notified_admins]
-                if not available:
-                    notified_admins.clear()
-                    available = admins[:]
-                chosen = random.choice(available)
-                notified_admins.add(chosen)
-
-                await self._send_warning_private(event, chosen, user_id, group_id, is_owner=False)
-                notifications_sent += 1
-                await asyncio.sleep(check_interval)
-
-                if not await self._is_member_in_group(event, group_id, user_id):
-                    logger.info(f"用户 {user_id} 已被移出，停止警告循环")
-                    return
-        finally:
-            # 清理状态
-            key = f"{group_id}:{user_id}"
-            async with self._lock:
-                self.secondary_tasks.pop(key, None)
-                # 如果二级验证状态还在，也清理掉
-                if key in self.user_states and "secondary_future" in self.user_states.get(key, {}):
-                    self.user_states.pop(key, None)
-
-    async def _send_warning_private(self, event: AstrMessageEvent, target_id: str,
-                                   user_id: str, group_id: int, is_owner: bool):
+        # 等待指定时间，期间可被取消
+        key = f"{group_id}:{user_id}"
         try:
-            group_name = "该群"
-            try:
-                group_info = await event.bot.api.call_action('get_group_info', group_id=group_id)
-                if group_info and isinstance(group_info, dict):
-                    group_name = group_info.get('group_name', group_name)
-            except Exception as e:
-                logger.debug(f"获取群名称失败: {e}")
+            await asyncio.sleep(delay)
+        except asyncio.CancelledError:
+            # 被管理员取消
+            cancel_msg_template = self.config.get(
+                "timeout_kick_cancel_message",
+                "已取消踢出 {user_name}。"
+            )
+            cancel_msg = cancel_msg_template.format(user_name=user_name)
+            await event.send(event.plain_result(cancel_msg))
+            return
 
-            user_name = "新成员"
-            try:
-                member_info = await event.bot.api.call_action('get_group_member_info',
-                                                              group_id=group_id,
-                                                              user_id=int(user_id))
-                if member_info and isinstance(member_info, dict):
-                    user_name = member_info.get('nickname', user_name)
-            except Exception as e:
-                logger.debug(f"获取成员昵称失败: {e}")
+        # 等待结束，再次检查机器人权限
+        if not await self._check_bot_admin(event, group_id):
+            await event.send(event.plain_result("机器人没有管理员权限，无法移出用户。"))
+            return
 
-            if is_owner:
-                msg_template = self.config.get("warning_owner_message",
-                                               "【风险提示】群内有新成员 {user_name}({user_id}) 未通过验证，请处理。")
-                message = msg_template.format(user_name=user_name, user_id=user_id, group_name=group_name)
-            else:
-                msg_template = self.config.get("warning_admin_message",
-                                               "【风险提示】群 {group_name} 内有新成员 {user_name}({user_id}) 未通过验证，请处理。")
-                message = msg_template.format(user_name=user_name, user_id=user_id, group_name=group_name)
+        # 再次确认用户是否还在群内
+        if not await self._is_member_in_group(event, group_id, user_id):
+            logger.info(f"用户 {user_id} 已不在群 {group_id} 中，跳过踢人")
+            return
 
-            await event.bot.api.call_action('send_private_msg',
-                                            user_id=int(target_id),
-                                            message=message)
-            logger.info(f"已发送警告私信给 {'群主' if is_owner else '管理员'} {target_id} 关于用户 {user_id}")
+        # 执行踢人
+        await self._kick_user(event, user_id)
+        await event.send(event.plain_result(f"已移出用户 {user_name}。"))
+
+    async def _check_bot_admin(self, event: AstrMessageEvent, group_id: int) -> bool:
+        """检查机器人自身是否为群主或管理员"""
+        try:
+            # 获取机器人自身信息
+            bot_id = event.bot.self_id
+            if not bot_id:
+                return False
+            result = await event.bot.api.call_action('get_group_member_info',
+                                                     group_id=group_id,
+                                                     user_id=bot_id)
+            if not result or not isinstance(result, dict):
+                return False
+            role = result.get('role')
+            return role in ['owner', 'admin']
         except Exception as e:
-            logger.error(f"发送私信警告失败: {e}")
+            logger.error(f"检查机器人权限失败: {e}")
+            return False
+
+    async def _check_cancel_command(self, event: AstrMessageEvent):
+        """检查管理员发送的取消踢人命令"""
+        if not event.message_obj.group_id:
+            return
+
+        msg = event.message_str.strip()
+        cancel_cmd = self.config.get("timeout_kick_cancel_command", "/cancel_kick")
+        if not msg.startswith(cancel_cmd):
+            return
+
+        # 只有管理员或群主可以取消
+        group_id = event.message_obj.group_id
+        owner, admins = await self._get_group_owner_and_admins(event, group_id)
+        sender = event.get_sender_id()
+        is_admin = (owner == sender) or (sender in admins)
+        if not is_admin:
+            await event.send(event.plain_result("只有管理员或群主可以取消踢人。"))
+            return
+
+        # 解析命令，获取被@的用户（取第一个）
+        at_targets = [str(comp.qq) for comp in event.message_obj.message if isinstance(comp, At)]
+        if not at_targets:
+            await event.send(event.plain_result("请指定要取消踢人的用户，例如：/cancel_kick @用户"))
+            return
+
+        target_id = at_targets[0]
+        key = f"{group_id}:{target_id}"
+        async with self._lock:
+            task = self.timeout_kick_tasks.get(key)
+            if task and not task.done():
+                task.cancel()
+                await event.send(event.plain_result("已取消踢人操作。"))
+            else:
+                await event.send(event.plain_result("该用户没有等待踢人的任务。"))
+
+    # ==================== 踢人操作 ====================
+    async def _kick_user(self, event: AstrMessageEvent, user_id: str):
+        if event.get_platform_name() != "aiocqhttp":
+            logger.warning(f"当前平台不支持踢人操作，无法移出用户 {user_id}")
+            return
+
+        group_id = event.message_obj.group_id
+        if not group_id:
+            logger.error("无法获取群ID，踢人失败")
+            return
+
+        try:
+            await event.bot.api.call_action(
+                'set_group_kick',
+                group_id=group_id,
+                user_id=int(user_id),
+                reject_add_request=False
+            )
+            logger.info(f"已将用户 {user_id} 移出群 {group_id}")
+        except Exception as e:
+            logger.error(f"踢出用户失败: {e}")
 
     # ==================== 随机生成题目 ====================
     def _generate_question(self):
@@ -547,28 +617,6 @@ class WelcomeVerificationPlugin(Star):
         b = random.randint(0, 50)
         return f"{a} + {b}", a + b
 
-    # ==================== 踢人操作 ====================
-    async def _kick_user(self, event: AstrMessageEvent, user_id: str):
-        if event.get_platform_name() != "aiocqhttp":
-            logger.warning(f"当前平台不支持踢人操作，无法移出用户 {user_id}")
-            return
-
-        group_id = event.message_obj.group_id
-        if not group_id:
-            logger.error("无法获取群ID，踢人失败")
-            return
-
-        try:
-            await event.bot.api.call_action(
-                'set_group_kick',
-                group_id=group_id,
-                user_id=int(user_id),
-                reject_add_request=False
-            )
-            logger.info(f"已将用户 {user_id} 移出群 {group_id}")
-        except Exception as e:
-            logger.error(f"踢出用户失败: {e}")
-
     # ==================== 插件清理 ====================
     async def terminate(self):
         async with self._lock:
@@ -584,3 +632,7 @@ class WelcomeVerificationPlugin(Star):
                 if not task.done():
                     task.cancel()
             self.secondary_tasks.clear()
+            for task in self.timeout_kick_tasks.values():
+                if not task.done():
+                    task.cancel()
+            self.timeout_kick_tasks.clear()

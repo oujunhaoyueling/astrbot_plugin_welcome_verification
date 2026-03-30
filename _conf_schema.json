@@ -22,14 +22,12 @@
     "verification_timeout": {
         "description": "主验证超时时间（秒）",
         "type": "int",
-        "default": 300,
-        "hint": "超过此时间未回答将视为失败一次"
+        "default": 300
     },
     "verification_max_attempts": {
         "description": "主验证最大尝试次数",
         "type": "int",
-        "default": 3,
-        "hint": "超过此次数将进入二级验证或直接踢出"
+        "default": 3
     },
     "verification_question_format": {
         "description": "主验证问题格式，支持 {question} 变量",
@@ -59,8 +57,7 @@
     "secondary_verification_timeout": {
         "description": "二级验证等待时间（秒）",
         "type": "int",
-        "default": 60,
-        "hint": "管理员/群主在此时间内回答正确则通过"
+        "default": 60
     },
     "secondary_verification_question": {
         "description": "二级验证问题格式，支持 {question} 和 {user_name} 变量",
@@ -90,13 +87,41 @@
     "warning_check_interval": {
         "description": "警告循环中检查成员是否在群的时间间隔（秒）",
         "type": "int",
-        "default": 10,
-        "hint": "每次发送警告后等待此时间再检查成员是否被移出"
+        "default": 10
     },
     "warning_cycle_max": {
-        "description": "最大警告循环次数（防止无限循环）",
+        "description": "最大警告循环次数",
         "type": "int",
-        "default": 10,
-        "hint": "超过此次数后停止通知"
+        "default": 10
+    },
+    "timeout_kick_enabled": {
+        "description": "是否启用超时踢人（踢人前等待管理员取消）",
+        "type": "bool",
+        "default": true
+    },
+    "timeout_kick_delay": {
+        "description": "超时踢人等待时间（秒）",
+        "type": "int",
+        "default": 30
+    },
+    "timeout_kick_warning_message": {
+        "description": "即将踢人的提示文本，支持 {user_name}, {delay}, {cancel_command}",
+        "type": "string",
+        "default": "用户 {user_name} 验证失败，将在 {delay} 秒后被移出群聊。如需取消，请管理员发送：{cancel_command} @用户"
+    },
+    "timeout_kick_cancel_command": {
+        "description": "取消踢人的命令关键词",
+        "type": "string",
+        "default": "/cancel_kick"
+    },
+    "timeout_kick_cancel_message": {
+        "description": "取消踢人后的提示文本，支持 {user_name}",
+        "type": "string",
+        "default": "已取消踢出 {user_name}。"
+    },
+    "timeout_kick_immediate_message": {
+        "description": "当超时踢人关闭时，直接踢人前的提示文本",
+        "type": "string",
+        "default": "验证失败，您已被移出群聊。"
     }
 }
