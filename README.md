@@ -44,12 +44,12 @@
 | `warning_check_interval` | int | `10` | 警告循环中检查成员是否在群的时间间隔（秒） |
 | `warning_cycle_max` | int | `10` | 最大警告循环次数 |
 ## 题库管理
-插件支持使用 JSON 格式的静态题库，题库文件需存放在 `AstrBot/data/plugin_data/welcome_verification/warehouse/` 目录下，格式如下：
+插件支持使用 JSON 格式的静态题库，题库文件需存放在 `data/welcome_verification/warehouse/` 目录下，格式如下：
 ```json
 [
-    {\"question\": \"1 + 1\", \"answer\": 2},
-    {\"question\": \"2 × 3\", \"answer\": 6},
-    {\"question\": \"10 - 4\", \"answer\": 6}
+    {"question": "1 + 1", "answer": 2},
+    {"question": "2 × 3", "answer": 6},
+    {"question": "10 - 4", "answer": 6}
 ]
 ```
 ### 命令说明
