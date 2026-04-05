@@ -48,66 +48,31 @@
     "verification_failed_message": {
         "description": "主验证失败提示，支持 {remaining} 变量",
         "type": "string",
-        "default": "答案错误，您还有 {remaining} 次机会。"
+        "default": "答案错误，您还有 {remaining} 次机会"
     },
     "secondary_verification_enabled": {
-        "description": "是否启用二级验证（主验证失败后进入）",
+        "description": "是否启用二级验证（主验证失败后通知管理员审批）",
         "type": "bool",
         "default": true
     },
     "secondary_verification_timeout": {
-        "description": "二级验证等待时间（秒）",
+        "description": "二级验证等待管理员审批时间（秒）",
         "type": "int",
         "default": 60
     },
-    "secondary_verification_question": {
-        "description": "二级验证问题格式，支持 {question} 和 {user_name} 变量",
-        "type": "string",
-        "default": "请 @{user_name} 并回答：{question} = ?"
-    },
-    "secondary_verification_correct_message": {
-        "description": "二级验证通过消息",
-        "type": "string",
-        "default": "二级验证通过，欢迎入群！"
-    },
-    "secondary_verification_failed_message": {
-        "description": "二级验证超时提示",
-        "type": "string",
-        "default": "二级验证超时，将通知管理员。"
-    },
     "timeout_kick_enabled": {
-        "description": "是否启用延迟踢人（true=等待管理员取消后踢人，false=立即踢人）",
+        "description": "是否启用超时踢人（踢人前等待管理员取消）",
         "type": "bool",
         "default": true
     },
     "timeout_kick_delay": {
-        "description": "延迟踢人等待时间（秒）",
+        "description": "超时踢人等待时间（秒）",
         "type": "int",
         "default": 30
-    },
-    "timeout_kick_warning_message": {
-        "description": "即将踢人的提示文本，支持 {user_name}, {delay}, {cancel_command}",
-        "type": "string",
-        "default": "用户 {user_name} 验证失败，将在 {delay} 秒后被移出群聊。如需取消，请管理员发送：{cancel_command} @用户"
     },
     "timeout_kick_cancel_command": {
         "description": "取消踢人的命令关键词",
         "type": "string",
         "default": "/cancel_kick"
-    },
-    "timeout_kick_cancel_message": {
-        "description": "取消踢人后的提示文本，支持 {user_name}",
-        "type": "string",
-        "default": "已取消踢出 {user_name}。"
-    },
-    "timeout_kick_immediate_message": {
-        "description": "当延迟踢人关闭时，立即踢人前的提示文本",
-        "type": "string",
-        "default": "验证失败，您已被移出群聊。"
-    },
-    "reject_add_request": {
-        "description": "踢人时是否拒绝该用户再次申请加群（true=拒绝，false=允许重新申请）",
-        "type": "bool",
-        "default": false
     }
 }
