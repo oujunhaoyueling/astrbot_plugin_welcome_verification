@@ -50,11 +50,6 @@
         "type": "string",
         "default": "答案错误，您还有 {remaining} 次机会。"
     },
-    "verification_ban_message": {
-        "description": "主验证失败且未开启二级验证时的踢出提示",
-        "type": "string",
-        "default": "您已超过最大尝试次数，将被移出群聊。"
-    },
     "secondary_verification_enabled": {
         "description": "是否启用二级验证（主验证失败后进入）",
         "type": "bool",
@@ -80,33 +75,13 @@
         "type": "string",
         "default": "二级验证超时，将通知管理员。"
     },
-    "warning_owner_message": {
-        "description": "私信群主的警告内容，支持 {user_name}, {user_id}, {group_name}",
-        "type": "string",
-        "default": "【风险提示】群内有新成员 {user_name}({user_id}) 未通过验证，请处理。"
-    },
-    "warning_admin_message": {
-        "description": "私信管理员的警告内容，支持 {user_name}, {user_id}, {group_name}",
-        "type": "string",
-        "default": "【风险提示】群 {group_name} 内有新成员 {user_name}({user_id}) 未通过验证，请处理。"
-    },
-    "warning_check_interval": {
-        "description": "警告循环中检查成员是否在群的时间间隔（秒）",
-        "type": "int",
-        "default": 10
-    },
-    "warning_cycle_max": {
-        "description": "最大警告循环次数",
-        "type": "int",
-        "default": 10
-    },
     "timeout_kick_enabled": {
-        "description": "是否启用超时踢人（踢人前等待管理员取消）",
+        "description": "是否启用延迟踢人（true=等待管理员取消后踢人，false=立即踢人）",
         "type": "bool",
         "default": true
     },
     "timeout_kick_delay": {
-        "description": "超时踢人等待时间（秒）",
+        "description": "延迟踢人等待时间（秒）",
         "type": "int",
         "default": 30
     },
@@ -126,8 +101,13 @@
         "default": "已取消踢出 {user_name}。"
     },
     "timeout_kick_immediate_message": {
-        "description": "当超时踢人关闭时，直接踢人前的提示文本",
+        "description": "当延迟踢人关闭时，立即踢人前的提示文本",
         "type": "string",
         "default": "验证失败，您已被移出群聊。"
+    },
+    "reject_add_request": {
+        "description": "踢人时是否拒绝该用户再次申请加群（true=拒绝，false=允许重新申请）",
+        "type": "bool",
+        "default": false
     }
 }
