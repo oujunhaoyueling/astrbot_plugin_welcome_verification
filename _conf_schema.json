@@ -1,4 +1,15 @@
 {
+    "enable_verification": {
+        "description": "全局总开关：是否开启入群验证（群独立开关优先级更高）",
+        "type": "bool",
+        "default": true
+    },
+    "verification_disabled_groups": {
+        "description": "黑名单：永远禁用验证的群聊（黑名单优先级最高，群号列表，每行一个）",
+        "type": "list",
+        "items": {"type": "string"},
+        "default": []
+    },
     "welcome_text": {
         "description": "欢迎文本，支持 {user_name} 变量",
         "type": "string",
@@ -13,11 +24,6 @@
         "description": "欢迎图片路径（本地绝对路径或http/https链接）",
         "type": "string",
         "default": ""
-    },
-    "enable_verification": {
-        "description": "是否开启入群验证",
-        "type": "bool",
-        "default": true
     },
     "verification_timeout": {
         "description": "主验证超时时间（秒）",
