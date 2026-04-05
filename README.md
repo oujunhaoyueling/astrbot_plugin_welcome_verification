@@ -24,9 +24,9 @@
       git clone https://github.com/oujunhaoyueling/astrbot_plugin_welcome_verification.git
    ```
             
-            2. 重启 AstrBot 或在 WebUI 的插件管理页面中点击"重载插件"
-            
-            3. 在 WebUI 的插件配置页面中根据需求修改配置项
+2. 重启 AstrBot 或在 WebUI 的插件管理页面中点击"重载插件"
+
+3. 在 WebUI 的插件配置页面中根据需求修改配置项
             
    ## 配置说明
             
