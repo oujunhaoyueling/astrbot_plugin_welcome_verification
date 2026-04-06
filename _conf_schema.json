@@ -50,49 +50,29 @@
         "default": "您已超过最大尝试次数，将被移出群聊。"
     },
     "secondary_verification_enabled": {
-        "description": "是否启用二级验证（主验证失败后进入）",
+        "description": "是否启用二级验证（管理员命令审批）",
         "type": "bool",
         "default": true
     },
     "secondary_verification_timeout": {
-        "description": "二级验证等待时间（秒）",
+        "description": "二级验证等待管理员决策的超时时间（秒）",
         "type": "int",
         "default": 60
     },
-    "secondary_verification_question": {
-        "description": "二级验证问题格式，支持 {question} 和 {user_name} 变量",
+    "secondary_verification_prompt": {
+        "description": "发送给管理员的提示文本，支持 {user_name}, {user_id}, {pass_cmd}, {kick_cmd}, {timeout}",
         "type": "string",
-        "default": "请 @{user_name} 并回答：{question} = ?"
+        "default": "用户 {user_name}({user_id}) 未通过入群验证，请管理员/群主使用以下命令处理：\n{pass_cmd} @用户 - 允许入群\n{kick_cmd} @用户 - 移出群聊\n超时时间 {timeout} 秒。"
     },
-    "secondary_verification_correct_message": {
-        "description": "二级验证通过消息",
+    "pass_command": {
+        "description": "允许入群的命令关键词",
         "type": "string",
-        "default": "二级验证通过，欢迎入群！"
+        "default": "/pass"
     },
-    "secondary_verification_failed_message": {
-        "description": "二级验证超时提示",
+    "kick_command": {
+        "description": "踢出入群的命令关键词",
         "type": "string",
-        "default": "二级验证超时，将通知管理员。"
-    },
-    "warning_owner_message": {
-        "description": "私信群主的警告内容，支持 {user_name}, {user_id}, {group_name}",
-        "type": "string",
-        "default": "【风险提示】群内有新成员 {user_name}({user_id}) 未通过验证，请处理。"
-    },
-    "warning_admin_message": {
-        "description": "私信管理员的警告内容，支持 {user_name}, {user_id}, {group_name}",
-        "type": "string",
-        "default": "【风险提示】群 {group_name} 内有新成员 {user_name}({user_id}) 未通过验证，请处理。"
-    },
-    "warning_check_interval": {
-        "description": "警告循环中检查成员是否在群的时间间隔（秒）",
-        "type": "int",
-        "default": 10
-    },
-    "warning_cycle_max": {
-        "description": "最大警告循环次数",
-        "type": "int",
-        "default": 10
+        "default": "/kick"
     },
     "timeout_kick_enabled": {
         "description": "是否启用超时踢人（踢人前等待管理员取消）",
@@ -107,7 +87,7 @@
     "timeout_kick_warning_message": {
         "description": "即将踢人的提示文本，支持 {user_name}, {delay}, {cancel_command}",
         "type": "string",
-        "default": "用户 {user_name} 验证失败，将在 {delay} 秒后被移出群聊。如需取消，请管理员发送：{cancel_command} @用户"
+        "default": "用户 {user_name} 验证失败，将在 {delay} 秒后被移出群聊。如需取消，请管理员发送：{cancel_command} @用户(有空格)"
     },
     "timeout_kick_cancel_command": {
         "description": "取消踢人的命令关键词",
@@ -117,11 +97,11 @@
     "timeout_kick_cancel_message": {
         "description": "取消踢人后的提示文本，支持 {user_name}",
         "type": "string",
-        "default": "已取消踢出 {user_name}。"
+        "default": "已取消踢出 {user_name}"
     },
     "timeout_kick_immediate_message": {
         "description": "当超时踢人关闭时，直接踢人前的提示文本",
         "type": "string",
-        "default": "验证失败，您已被移出群聊。"
+        "default": "验证失败，您即将被移出群聊"
     }
 }
