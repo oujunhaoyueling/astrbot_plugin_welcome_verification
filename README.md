@@ -35,7 +35,7 @@
    | `verification_disabled_groups` | list | [] | 黑名单群号列表 |
    | `welcome_text` | string | 欢迎 {user_name} 加入本群！ | 欢迎文本 |
    | `enable_welcome_image` | bool | false | 是否发送欢迎图片 |
-   | `welcome_image` | string | "https://t.alcy.cc/moe" | 欢迎图片路径 |
+   | `welcome_image` | string | https://t.alcy.cc/moe | 欢迎图片路径 |
    | `verification_timeout` | int | 300 | 验证超时时间（秒） |
    | `verification_max_attempts` | int | 3 | 最大尝试次数 |
    | `verification_question_format` | string | 请回答：{question} = ? | 验证问题格式 |
