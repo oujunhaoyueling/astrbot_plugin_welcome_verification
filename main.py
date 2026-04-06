@@ -11,7 +11,7 @@ from astrbot.api.message_components import At, Plain, Image
 from astrbot.core.star.star_tools import StarTools
 
 
-@register("astrbot_plugin_welcome_verification", "月凌", "入群欢迎与验证插件", "2.5.0")
+@register("astrbot_plugin_welcome_verification", "月凌", "入群欢迎与验证插件", "2.1.0")
 class WelcomeVerificationPlugin(Star):
     def __init__(self, context: Context, config: dict):
         super().__init__(context)
@@ -159,7 +159,6 @@ class WelcomeVerificationPlugin(Star):
         group_id = event.message_obj.group_id
         user_name = event.get_sender_name()
 
-        # 排除机器人自己入群
         bot_id = str(event.bot.self_id) if hasattr(event.bot, 'self_id') else None
         if bot_id and user_id == bot_id:
             logger.info(f"机器人自身入群，忽略欢迎和验证")
@@ -361,20 +360,35 @@ class WelcomeVerificationPlugin(Star):
             }
 
         async def wait_for_decision():
-            while True:
-                await asyncio.sleep(1)
-                async with self._lock:
-                    state = self.user_states.get(key)
-                    if not state:
-                        return
-                    if not state.get("pending_decision"):
-                        return
-                    if asyncio.get_event_loop().time() > state.get("secondary_expire", 0):
-                        self.user_states.pop(key, None)
-                        await self._schedule_timeout_kick(event, user_id, group_id)
-                        return
+            task_key = f"wait_{group_id}_{user_id}"
+            try:
+                while True:
+                    await asyncio.sleep(1)
+                    async with self._lock:
+                        state = self.user_states.get(key)
+                        if not state:
+                            return
+                        if not state.get("pending_decision"):
+                            return
+                        if asyncio.get_event_loop().time() > state.get("secondary_expire", 0):
+                            self.user_states.pop(key, None)
+                            await self._schedule_timeout_kick(event, user_id, group_id)
+                            return
+            except asyncio.CancelledError:
+                logger.debug(f"二级验证等待任务被取消: {task_key}")
+                raise
 
-        asyncio.create_task(wait_for_decision())
+        task = asyncio.create_task(wait_for_decision())
+        task.set_name(f"wv_secondary_{group_id}_{user_id}")
+        async with self._lock:
+            self.secondary_tasks[key] = task
+
+        def cleanup(task):
+            async def _remove():
+                async with self._lock:
+                    self.secondary_tasks.pop(key, None)
+            asyncio.create_task(_remove())
+        task.add_done_callback(cleanup)
 
     async def _handle_pass_command(self, event: AstrMessageEvent):
         msg = event.message_str.strip()
@@ -406,6 +420,9 @@ class WelcomeVerificationPlugin(Star):
                 await event.send(event.plain_result("该用户没有等待审批的验证请求"))
                 return
             self.user_states.pop(key, None)
+            task = self.secondary_tasks.pop(key, None)
+            if task and not task.done():
+                task.cancel()
             await event.send(event.plain_result(f"已允许用户 {target_id} 入群"))
             try:
                 await event.send(event.chain_result([At(qq=target_id), Plain(" 管理员已允许您入群")]))
@@ -440,6 +457,9 @@ class WelcomeVerificationPlugin(Star):
             state = self.user_states.get(key)
             if state and state.get("pending_decision"):
                 self.user_states.pop(key, None)
+            task = self.secondary_tasks.pop(key, None)
+            if task and not task.done():
+                task.cancel()
         await self._kick_user(event, target_id)
         await event.send(event.plain_result(f"已移出用户 {target_id}"))
 
@@ -476,6 +496,7 @@ class WelcomeVerificationPlugin(Star):
             if old_task and not old_task.done():
                 old_task.cancel()
             task = asyncio.create_task(self._timeout_kick_process(event, user_id, group_id))
+            task.set_name(f"wv_timeoutkick_{group_id}_{user_id}")
             self.timeout_kick_tasks[key] = task
             task.add_done_callback(lambda t, k=key: asyncio.create_task(self._clean_timeout_task(k)))
 
@@ -644,12 +665,8 @@ class WelcomeVerificationPlugin(Star):
         return f"{a} + {b}", a + b
 
     async def terminate(self):
+        logger.info(f"开始清理插件 {self.name}")
         async with self._lock:
-            for state in self.user_states.values():
-                future = state.get("future")
-                if future and not future.done():
-                    future.cancel()
-            self.user_states.clear()
             for task in self.secondary_tasks.values():
                 if not task.done():
                     task.cancel()
@@ -658,3 +675,10 @@ class WelcomeVerificationPlugin(Star):
                 if not task.done():
                     task.cancel()
             self.timeout_kick_tasks.clear()
+            for state in self.user_states.values():
+                future = state.get("future")
+                if future and not future.done():
+                    future.cancel()
+            self.user_states.clear()
+        await asyncio.sleep(0.5)
+        logger.info(f"插件 {self.name} 已清理")
