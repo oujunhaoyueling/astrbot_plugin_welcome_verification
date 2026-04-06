@@ -11,7 +11,7 @@ from astrbot.api.message_components import At, Plain, Image
 from astrbot.core.star.star_tools import StarTools
 
 
-@register("astrbot_plugin_welcome_verification", "月凌", "入群欢迎与验证插件", "2.1.0")
+@register("astrbot_plugin_welcome_verification", "月凌", "入群欢迎与验证插件", "2.5.0")
 class WelcomeVerificationPlugin(Star):
     def __init__(self, context: Context, config: dict):
         super().__init__(context)
