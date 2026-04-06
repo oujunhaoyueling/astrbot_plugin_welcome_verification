@@ -7,12 +7,12 @@
     "enable_welcome_image": {
         "description": "是否发送欢迎图片",
         "type": "bool",
-        "default": false
+        "default": true
     },
     "welcome_image": {
         "description": "欢迎图片路径（本地绝对路径或http/https链接）",
         "type": "string",
-        "default": ""
+        "default": "https://t.alcy.cc/moe"
     },
     "enable_verification": {
         "description": "是否开启入群验证",
