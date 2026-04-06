@@ -11,7 +11,7 @@ from astrbot.api.message_components import At, Plain, Image
 from astrbot.core.star.star_tools import StarTools
 
 
-@register("astrbot_plugin_welcome_verification", "月凌", "入群欢迎与验证插件", "2.5.0")
+@register("astrbot_plugin_welcome_verification", "月凌", "入群欢迎与验证插件", "2.1.0")
 class WelcomeVerificationPlugin(Star):
     def __init__(self, context: Context, config: dict):
         super().__init__(context)
@@ -159,6 +159,12 @@ class WelcomeVerificationPlugin(Star):
         group_id = event.message_obj.group_id
         user_name = event.get_sender_name()
 
+        # 排除机器人自己入群
+        bot_id = str(event.bot.self_id) if hasattr(event.bot, 'self_id') else None
+        if bot_id and user_id == bot_id:
+            logger.info(f"机器人自身入群，忽略欢迎和验证")
+            return
+
         logger.info(f"新成员入群: {user_name}({user_id}) 进入群 {group_id}")
 
         await self._send_welcome(event, user_name)
@@ -287,10 +293,8 @@ class WelcomeVerificationPlugin(Star):
             user_input = event.message_str.strip()
             future = state.get("future")
 
-            # 根据答案类型进行验证
             if isinstance(correct_answer, int):
                 if not user_input.isdigit():
-                    # 非数字输入不消耗尝试次数，仅提示
                     pass
                 else:
                     answer = int(user_input)
@@ -298,12 +302,10 @@ class WelcomeVerificationPlugin(Star):
                         future.set_result(answer == correct_answer)
                     return
             else:
-                # 字符串答案直接比较
                 if future and not future.done():
                     future.set_result(user_input == correct_answer)
                 return
 
-        # 锁外发送提示
         if not user_input.isdigit():
             await event.send(event.plain_result("请输入数字答案"))
 
@@ -391,7 +393,6 @@ class WelcomeVerificationPlugin(Star):
             await event.send(event.plain_result("只有管理员或群主可以使用此命令"))
             return
 
-        # 提取被@的用户
         at_targets = [str(comp.qq) for comp in event.message_obj.message if isinstance(comp, At)]
         if not at_targets:
             await event.send(event.plain_result(f"请指定要允许入群的用户，例如：{pass_cmd} @用户"))
