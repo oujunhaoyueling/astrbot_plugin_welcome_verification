@@ -19,8 +19,10 @@
 
 1. 将本插件下载到 AstrBot 的插件目录：
    ```
+   
       cd data/plugins
       git clone https://github.com/oujunhaoyueling/astrbot_plugin_welcome_verification.git
+      
    ```
             
 2. 重启 AstrBot 或在 WebUI 的插件管理页面中点击"重载插件"

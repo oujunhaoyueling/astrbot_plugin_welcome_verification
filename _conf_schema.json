@@ -74,6 +74,16 @@
         "type": "string",
         "default": "/kick"
     },
+    "pass_success_message": {
+        "description": "pass命令执行成功后的回复文本",
+        "type": "string",
+        "default": "已允许该用户入群"
+    },
+    "kick_success_message": {
+        "description": "kick命令执行成功后的回复文本",
+        "type": "string",
+        "default": "已移出该用户"
+    },
     "timeout_kick_enabled": {
         "description": "是否启用超时踢人（踢人前等待管理员取消）",
         "type": "bool",
@@ -103,5 +113,15 @@
         "description": "当超时踢人关闭时，直接踢人前的提示文本",
         "type": "string",
         "default": "验证失败，您即将被移出群聊"
+    },
+    "no_permission_prompt": {
+        "description": "机器人无管理员权限时，@管理员的提示文本，支持 {user_name}, {user_id}, {group_id}",
+        "type": "string",
+        "default": "用户 {user_name}({user_id}) 未通过入群验证，但我没有管理员权限无法处理，请管理员手动处理"
+    },
+    "secondary_timeout_auto_kick_message": {
+        "description": "二级验证超时后自动踢人的提醒文本，支持 {user_name}, {user_id}",
+        "type": "string",
+        "default": "用户 {user_name} 未在时间内得到处理，已自动移出群聊"
     }
 }
