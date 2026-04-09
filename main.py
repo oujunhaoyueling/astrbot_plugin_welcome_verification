@@ -2,7 +2,7 @@ import random
 import asyncio
 import json
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Set
 
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star, register
@@ -151,17 +151,17 @@ class WelcomeVerificationPlugin(Star):
         if not self._is_group_increase(event):
             return
 
+        raw = event.message_obj.raw_message
+        if isinstance(raw, dict):
+            user_id_raw = str(raw.get('user_id', ''))
+            self_id_raw = str(raw.get('self_id', ''))
+            if user_id_raw and self_id_raw and user_id_raw == self_id_raw:
+                logger.info(f"机器人自身入群，忽略欢迎和验证")
+                return
+
         user_id = event.get_sender_id()
         group_id = event.message_obj.group_id
         user_name = event.get_sender_name()
-
-        try:
-            bot_id = str(event.bot.self_id)
-            if str(user_id) == bot_id:
-                logger.info(f"机器人自身入群，忽略欢迎和验证")
-                return
-        except AttributeError:
-            pass
 
         logger.info(f"新成员入群: {user_name}({user_id}) 进入群 {group_id}")
 
@@ -320,8 +320,8 @@ class WelcomeVerificationPlugin(Star):
             "{kick_cmd} @用户 - 移出群聊\n"
             "超时时间 {timeout} 秒。"
         )
-        pass_cmd = self.config.get("pass_command", "/pass")
-        kick_cmd = self.config.get("kick_command", "/kick")
+        pass_cmd = self.config.get("pass_command", "/pass").lstrip('/')
+        kick_cmd = self.config.get("kick_command", "/kick").lstrip('/')
         timeout_sec = self.config.get("secondary_verification_timeout", 60)
 
         user_name = event.get_sender_name()
@@ -427,14 +427,16 @@ class WelcomeVerificationPlugin(Star):
         if not user_input.isdigit():
             await event.send(event.plain_result("请输入数字答案"))
 
-    @filter.command("pass")
+    @filter.event_message_type(filter.EventMessageType.ALL)
     async def _handle_pass_command(self, event: AstrMessageEvent):
         if not event.message_obj.group_id:
             return
         
         msg = event.message_str.strip()
         pass_cmd = self.config.get("pass_command", "/pass")
-        if not msg.startswith(pass_cmd):
+        pass_cmd_variants: Set[str] = {pass_cmd, pass_cmd.lstrip('/')}
+        
+        if not any(msg.startswith(v) for v in pass_cmd_variants):
             return
 
         group_id = event.message_obj.group_id
@@ -447,7 +449,8 @@ class WelcomeVerificationPlugin(Star):
 
         at_targets = [str(comp.qq) for comp in event.message_obj.message if isinstance(comp, At)]
         if not at_targets:
-            await event.send(event.plain_result(f"请指定要允许入群的用户，例如：{pass_cmd} @用户"))
+            detected_cmd = pass_cmd if msg.startswith(pass_cmd) else pass_cmd.lstrip('/')
+            await event.send(event.plain_result(f"请指定要允许入群的用户，例如：{detected_cmd} @用户"))
             return
 
         target_id = at_targets[0]
@@ -472,14 +475,16 @@ class WelcomeVerificationPlugin(Star):
         except Exception:
             pass
 
-    @filter.command("kick")
+    @filter.event_message_type(filter.EventMessageType.ALL)
     async def _handle_kick_command(self, event: AstrMessageEvent):
         if not event.message_obj.group_id:
             return
             
         msg = event.message_str.strip()
         kick_cmd = self.config.get("kick_command", "/kick")
-        if not msg.startswith(kick_cmd):
+        kick_cmd_variants: Set[str] = {kick_cmd, kick_cmd.lstrip('/')}
+        
+        if not any(msg.startswith(v) for v in kick_cmd_variants):
             return
 
         group_id = event.message_obj.group_id
@@ -492,7 +497,8 @@ class WelcomeVerificationPlugin(Star):
 
         at_targets = [str(comp.qq) for comp in event.message_obj.message if isinstance(comp, At)]
         if not at_targets:
-            await event.send(event.plain_result(f"请指定要踢出的用户，例如：{kick_cmd} @用户"))
+            detected_cmd = kick_cmd if msg.startswith(kick_cmd) else kick_cmd.lstrip('/')
+            await event.send(event.plain_result(f"请指定要踢出的用户，例如：{detected_cmd} @用户"))
             return
 
         target_id = at_targets[0]
@@ -572,7 +578,7 @@ class WelcomeVerificationPlugin(Star):
         except Exception:
             pass
 
-        cancel_cmd = self.config.get("timeout_kick_cancel_command", "/cancel_kick")
+        cancel_cmd = self.config.get("timeout_kick_cancel_command", "/cancel_kick").lstrip('/')
         warning_msg = warning_template.format(
             user_name=user_name,
             delay=delay,
@@ -625,7 +631,9 @@ class WelcomeVerificationPlugin(Star):
 
         msg = event.message_str.strip()
         cancel_cmd = self.config.get("timeout_kick_cancel_command", "/cancel_kick")
-        if not msg.startswith(cancel_cmd):
+        cancel_cmd_variants: Set[str] = {cancel_cmd, cancel_cmd.lstrip('/')}
+        
+        if not any(msg.startswith(v) for v in cancel_cmd_variants):
             return
 
         group_id = event.message_obj.group_id
@@ -638,7 +646,8 @@ class WelcomeVerificationPlugin(Star):
 
         at_targets = [str(comp.qq) for comp in event.message_obj.message if isinstance(comp, At)]
         if not at_targets:
-            await event.send(event.plain_result("请指定要取消踢人的用户，例如：/cancel_kick @用户"))
+            detected_cmd = cancel_cmd if msg.startswith(cancel_cmd) else cancel_cmd.lstrip('/')
+            await event.send(event.plain_result(f"请指定要取消踢人的用户，例如：{detected_cmd} @用户"))
             return
 
         target_id = at_targets[0]
