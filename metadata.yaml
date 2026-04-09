@@ -1,7 +1,7 @@
 name: astrbot_plugin_welcome_verification
 desc: 入群欢迎与验证插件，支持自定义欢迎文本、图片，支持自定义题库
 author: 月凌
-version: 2.5.2
+version: 2.5.3
 repo: https://github.com/oujunhaoyueling/astrbot_plugin_welcome_verification
 display_name: 入群欢迎与验证
 support_platforms:
