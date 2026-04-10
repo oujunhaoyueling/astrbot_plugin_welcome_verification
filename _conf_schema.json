@@ -62,7 +62,7 @@
     "secondary_verification_prompt": {
         "description": "发送给管理员的提示文本，支持 {user_name}, {user_id}, {pass_cmd}, {kick_cmd}, {timeout}",
         "type": "string",
-        "default": "用户 {user_name}({user_id}) 未通过入群验证，请管理员/群主使用以下命令处理：\n{pass_cmd} @用户 - 允许入群\n{kick_cmd} @用户 - 移出群聊\n超时时间 {timeout} 秒。"
+        "default": "用户 {user_name}({user_id}) 未通过入群验证，请管理员/群主使用以下命令处理（注意命令和@用户之间要有空格）：\n{pass_cmd} @用户 - 允许入群\n{kick_cmd} @用户 - 移出群聊\n超时时间 {timeout} 秒。"
     },
     "pass_command": {
         "description": "允许入群的命令关键词",
