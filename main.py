@@ -11,7 +11,13 @@ from astrbot.api.message_components import At, Plain, Image
 from astrbot.core.star.star_tools import StarTools
 
 
-@register("astrbot_plugin_welcome_verification", "月凌", "入群欢迎与验证插件", "2.5.3")
+@register(
+    "astrbot_plugin_welcome_verification",
+    "月凌",
+    "入群欢迎与验证插件",
+    "2.5.4",
+    repo="https://github.com/oujunhaoyueling/astrbot_plugin_welcome_verification"
+)
 class WelcomeVerificationPlugin(Star):
     def __init__(self, context: Context, config: dict):
         super().__init__(context)
@@ -20,6 +26,7 @@ class WelcomeVerificationPlugin(Star):
         self.secondary_tasks: Dict[str, asyncio.Task] = {}
         self.timeout_kick_tasks: Dict[str, asyncio.Task] = {}
         self._lock = asyncio.Lock()
+        self._kicking_users: Set[str] = set()  # 防止重复踢人
 
         self.data_dir: Path = StarTools.get_data_dir("welcome_verification")
         self.warehouse_dir = self.data_dir / "warehouse"
@@ -151,13 +158,9 @@ class WelcomeVerificationPlugin(Star):
         if not self._is_group_increase(event):
             return
 
-        raw = event.message_obj.raw_message
-        if isinstance(raw, dict):
-            user_id_raw = str(raw.get('user_id', ''))
-            self_id_raw = str(raw.get('self_id', ''))
-            if user_id_raw and self_id_raw and user_id_raw == self_id_raw:
-                logger.info(f"机器人自身入群，忽略欢迎和验证")
-                return
+        if event.get_self_id() == event.get_sender_id():
+            logger.info(f"机器人自身入群，忽略欢迎和验证")
+            return
 
         user_id = event.get_sender_id()
         group_id = event.message_obj.group_id
@@ -190,6 +193,8 @@ class WelcomeVerificationPlugin(Star):
         return False
 
     async def _is_member_in_group(self, event: AstrMessageEvent, group_id: int, user_id: str) -> bool:
+        if event.get_platform_name() != "aiocqhttp":
+            return False
         try:
             result = await event.bot.api.call_action('get_group_member_list', group_id=group_id)
             if not result or not isinstance(result, list):
@@ -315,7 +320,7 @@ class WelcomeVerificationPlugin(Star):
 
         prompt_template = self.config.get(
             "secondary_verification_prompt",
-            "用户 {user_name}({user_id}) 未通过入群验证，请管理员/群主使用以下命令处理：\n"
+            "用户 {user_name}({user_id}) 未通过入群验证，请管理员/群主使用以下命令处理（注意命令和@用户之间要有空格）：\n"
             "{pass_cmd} @用户 - 允许入群\n"
             "{kick_cmd} @用户 - 移出群聊\n"
             "超时时间 {timeout} 秒。"
@@ -380,6 +385,8 @@ class WelcomeVerificationPlugin(Star):
             self.secondary_tasks[key] = task
 
         def cleanup(task):
+            if task.exception():
+                logger.error(f"二级验证任务异常: {task.exception()}")
             async def _remove():
                 async with self._lock:
                     self.secondary_tasks.pop(key, None)
@@ -387,13 +394,14 @@ class WelcomeVerificationPlugin(Star):
         task.add_done_callback(cleanup)
 
     async def _auto_kick_after_timeout(self, event: AstrMessageEvent, user_id: str, group_id: int, user_name: str):
-        await self._kick_user(event, user_id)
-        msg_template = self.config.get(
-            "secondary_timeout_auto_kick_message",
-            "用户 {user_name} 未在时间内得到处理，已自动移出群聊。"
-        )
-        msg = msg_template.format(user_name=user_name, user_id=user_id)
-        await event.send(event.plain_result(msg))
+        kick_success = await self._kick_user(event, user_id)
+        if kick_success:
+            msg_template = self.config.get(
+                "secondary_timeout_auto_kick_message",
+                "用户 {user_name} 未在时间内得到处理，已自动移出群聊。"
+            )
+            msg = msg_template.format(user_name=user_name, user_id=user_id)
+            await event.send(event.plain_result(msg))
 
     async def _check_answer(self, event: AstrMessageEvent):
         user_id = event.get_sender_id()
@@ -411,21 +419,14 @@ class WelcomeVerificationPlugin(Star):
             user_input = event.message_str.strip()
             future = state.get("future")
 
-            if isinstance(correct_answer, int):
-                if not user_input.isdigit():
-                    pass
+            if future and not future.done():
+                if isinstance(correct_answer, int):
+                    if user_input.isdigit():
+                        future.set_result(int(user_input) == correct_answer)
+                    else:
+                        asyncio.create_task(event.send(event.plain_result("请输入数字答案")))
                 else:
-                    answer = int(user_input)
-                    if future and not future.done():
-                        future.set_result(answer == correct_answer)
-                    return
-            else:
-                if future and not future.done():
                     future.set_result(user_input == correct_answer)
-                return
-
-        if not user_input.isdigit():
-            await event.send(event.plain_result("请输入数字答案"))
 
     @filter.event_message_type(filter.EventMessageType.ALL)
     async def _handle_pass_command(self, event: AstrMessageEvent):
@@ -511,12 +512,19 @@ class WelcomeVerificationPlugin(Star):
             task = self.secondary_tasks.pop(key, None)
             if task and not task.done():
                 task.cancel()
+            # 同时取消可能存在的超时踢人任务
+            timeout_task = self.timeout_kick_tasks.pop(key, None)
+            if timeout_task and not timeout_task.done():
+                timeout_task.cancel()
                 
-        await self._kick_user(event, target_id)
-        success_msg = self.config.get("kick_success_message", "已移出该用户")
-        await event.send(event.plain_result(success_msg))
+        kick_success = await self._kick_user(event, target_id)
+        if kick_success:
+            success_msg = self.config.get("kick_success_message", "已移出该用户")
+            await event.send(event.plain_result(success_msg))
 
     async def _get_group_owner_and_admins(self, event: AstrMessageEvent, group_id: int) -> Tuple[Optional[str], List[str]]:
+        if event.get_platform_name() != "aiocqhttp":
+            return None, []
         try:
             result = await event.bot.api.call_action('get_group_member_list', group_id=group_id)
             if not result or not isinstance(result, list):
@@ -606,23 +614,38 @@ class WelcomeVerificationPlugin(Star):
             logger.info(f"用户 {user_id} 已不在群 {group_id} 中，跳过踢人")
             return
 
-        await self._kick_user(event, user_id)
-        await event.send(event.plain_result(f"已移出用户 {user_name}"))
+        kick_success = await self._kick_user(event, user_id)
+        if kick_success:
+            # 再次确认用户是否已不在群中
+            still_in_group = await self._is_member_in_group(event, group_id, user_id)
+            if not still_in_group:
+                await event.send(event.plain_result(f"已移出用户 {user_name}"))
+            else:
+                logger.warning(f"踢人操作似乎未成功，用户 {user_id} 仍在群中")
 
     async def _check_bot_admin(self, event: AstrMessageEvent, group_id: int) -> bool:
+        if event.get_platform_name() != "aiocqhttp":
+            return False
         try:
-            bot_id = event.bot.self_id
+            bot_id = event.get_self_id()
             if not bot_id:
+                bot_id = event.message_obj.self_id
+            if not bot_id:
+                logger.error("无法获取机器人自身ID")
                 return False
+
             result = await event.bot.api.call_action('get_group_member_info',
                                                      group_id=group_id,
-                                                     user_id=bot_id)
+                                                     user_id=int(bot_id))
             if not result or not isinstance(result, dict):
+                logger.warning(f"获取机器人自身成员信息失败，API返回: {result}")
                 return False
+
             role = result.get('role')
-            return role in ['owner', 'admin']
+            logger.debug(f"机器人角色: {role}")
+            return role in ('owner', 'admin')
         except Exception as e:
-            logger.error(f"检查机器人权限失败: {e}")
+            logger.error(f"检查机器人权限失败: {e}", exc_info=True)
             return False
 
     async def _check_cancel_command(self, event: AstrMessageEvent):
@@ -660,16 +683,22 @@ class WelcomeVerificationPlugin(Star):
             else:
                 await event.send(event.plain_result("该用户没有等待踢人的任务"))
 
-    async def _kick_user(self, event: AstrMessageEvent, user_id: str):
+    async def _kick_user(self, event: AstrMessageEvent, user_id: str) -> bool:
         if event.get_platform_name() != "aiocqhttp":
             logger.warning(f"当前平台不支持踢人操作，无法移出用户 {user_id}")
-            return
+            return False
 
         group_id = event.message_obj.group_id
         if not group_id:
             logger.error("无法获取群ID，踢人失败")
-            return
+            return False
 
+        key = f"{group_id}:{user_id}"
+        if key in self._kicking_users:
+            logger.debug(f"用户 {user_id} 已在踢出过程中，跳过重复踢人")
+            return False
+
+        self._kicking_users.add(key)
         try:
             await event.bot.api.call_action(
                 'set_group_kick',
@@ -678,8 +707,12 @@ class WelcomeVerificationPlugin(Star):
                 reject_add_request=False
             )
             logger.info(f"已将用户 {user_id} 移出群 {group_id}")
+            return True
         except Exception as e:
             logger.error(f"踢出用户失败: {e}")
+            return False
+        finally:
+            self._kicking_users.discard(key)
 
     def _generate_question(self):
         operators = ['+', '-', '*']
