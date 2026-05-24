@@ -38,7 +38,7 @@
 |--------|------|--------|------|
 | `welcome_text` | string | 欢迎 {user_name} 加入本群！ | 欢迎文本，支持 `{user_name}` 变量 |
 | `enable_welcome_image` | bool | true | 是否发送欢迎图片 |
-| `welcome_image` | string | https://t.alcy.cc/moe | 欢迎图片路径（本地或 URL） |
+| `welcome_image` | string | https://t.alcy.cc/moe | 欢迎图片路径（本地绝对路径或 URL，推荐放在 data/ 目录下） |
 | `enable_verification` | bool | true | 是否开启入群验证 |
 | `verification_timeout` | int | 300 | 主验证超时时间（秒） |
 | `verification_max_attempts` | int | 3 | 主验证最大尝试次数 |
@@ -178,6 +178,13 @@ welcome reset
 - **群内命令配置**：通过 `welcome` 系列命令快速修改配置
 - **自动配置同步**：命令修改的配置自动同步到 WebUI
 
+#### 🔧 功能优化
+
+**踢人命令增强**
+- `/kick` 命令现在任何时候都能使用（只要是管理员/群主）
+- 不再局限于二级验证阶段，可随时踢出任意群员
+- 添加了防止踢出自己的保护
+
 #### 📋 新增命令
 
 | 命令 | 说明 | 权限 |
@@ -188,6 +195,7 @@ welcome reset
 | `welcome image on` | 启用欢迎图片 | 管理员/群主 |
 | `welcome image off` | 禁用欢迎图片 | 管理员/群主 |
 | `welcome reset` | 重置为全局配置 | 管理员/群主 |
+| `/kick @用户` | 踢出任意用户（任何时候可用） | 管理员/群主 |
 
 ### v2.6.0 (2026-05-16)
 

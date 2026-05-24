@@ -10,7 +10,7 @@
         "default": true
     },
     "welcome_image": {
-        "description": "欢迎图片路径（本地绝对路径或http/https链接）",
+        "description": "欢迎图片路径（本地绝对路径或http/https链接，推荐放在data/目录下）",
         "type": "string",
         "default": "https://t.alcy.cc/moe"
     },
@@ -42,7 +42,7 @@
                     "welcome_image": {
                         "description": "欢迎图片URL/路径（留空使用全局）",
                         "type": "string",
-                        "hint": "本地路径或网络URL，留空则使用全局配置"
+                        "hint": "本地绝对路径或网络URL，留空则使用全局配置。推荐放在 data/ 目录下"
                     },
                     "question_bank": {
                         "description": "自定义题库文件名（留空使用全局）",
