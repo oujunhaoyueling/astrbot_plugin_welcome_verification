@@ -14,8 +14,8 @@ from astrbot.core.star.star_tools import StarTools
 @register(
     "astrbot_plugin_welcome_verification",
     "月凌",
-    "入群欢迎与验证插件",
-    "2.6.0",
+    "入群欢迎与验证插件，支持群组自定义配置",
+    "2.7.0",
     repo="https://github.com/oujunhaoyueling/astrbot_plugin_welcome_verification"
 )
 class WelcomeVerificationPlugin(Star):
@@ -44,21 +44,116 @@ class WelcomeVerificationPlugin(Star):
         self._load_all_question_banks()
 
     def _load_group_configs(self):
+        """从 WebUI 配置或本地文件加载群组配置"""
         try:
+            # 优先从 WebUI 的 template_list 配置中加载
+            template_list_configs = self.config.get("group_configs", [])
+            if template_list_configs and isinstance(template_list_configs, list):
+                # 将 template_list 格式转换为内部 dict 格式
+                self.group_configs = self._convert_template_list_to_dict(template_list_configs)
+                logger.info(f"已从 WebUI 配置加载 {len(self.group_configs)} 个群组配置")
+                return
+            
+            # 如果 WebUI 配置为空或无效，尝试从本地文件加载
             if self.config_file.exists():
                 with open(self.config_file, 'r', encoding='utf-8') as f:
-                    self.group_configs = json.load(f)
+                    loaded_config = json.load(f)
+                    if isinstance(loaded_config, dict):
+                        self.group_configs = loaded_config
+                        logger.info(f"已从本地文件加载 {len(self.group_configs)} 个群组配置")
+                    else:
+                        self.group_configs = {}
             else:
                 self.group_configs = {}
-        except (json.JSONDecodeError, OSError) as e:
+        except (json.JSONDecodeError, OSError, Exception) as e:
             logger.error(f"加载群配置失败: {e}")
             self.group_configs = {}
 
+    def _convert_template_list_to_dict(self, template_list: list) -> dict:
+        """将 template_list 格式转换为内部使用的 dict 格式"""
+        result = {}
+        for item in template_list:
+            if not isinstance(item, dict):
+                continue
+            group_id = item.get("group_id")
+            if not group_id:
+                continue
+            
+            # 构建群组配置
+            group_config = {}
+            
+            # 处理欢迎文本
+            welcome_text = item.get("welcome_text")
+            if welcome_text and welcome_text.strip():
+                group_config["welcome"] = group_config.get("welcome", {})
+                group_config["welcome"]["text"] = welcome_text
+            
+            # 处理欢迎图片启用状态
+            enable_image = item.get("enable_welcome_image")
+            if enable_image is not None:
+                group_config["welcome"] = group_config.get("welcome", {})
+                group_config["welcome"]["enable_image"] = enable_image
+            
+            # 处理欢迎图片路径
+            welcome_image = item.get("welcome_image")
+            if welcome_image and welcome_image.strip():
+                group_config["welcome"] = group_config.get("welcome", {})
+                group_config["welcome"]["image"] = welcome_image
+            
+            # 处理题库
+            question_bank = item.get("question_bank")
+            if question_bank and question_bank.strip():
+                group_config["question_bank"] = question_bank
+            
+            if group_config:
+                result[str(group_id)] = group_config
+        
+        return result
+
+    def _convert_dict_to_template_list(self, group_configs: dict) -> list:
+        """将内部 dict 格式转换为 template_list 格式"""
+        result = []
+        for group_id, config in group_configs.items():
+            item = {
+                "__template_key": "group_config",
+                "group_id": str(group_id)
+            }
+            
+            # 处理欢迎配置
+            welcome = config.get("welcome", {})
+            if "text" in welcome:
+                item["welcome_text"] = welcome["text"]
+            if "enable_image" in welcome:
+                item["enable_welcome_image"] = welcome["enable_image"]
+            if "image" in welcome:
+                item["welcome_image"] = welcome["image"]
+            
+            # 处理题库
+            if "question_bank" in config:
+                item["question_bank"] = config["question_bank"]
+            
+            result.append(item)
+        
+        return result
+
     def _save_group_configs(self):
+        """保存群组配置到本地文件并尝试同步到 WebUI"""
         try:
+            # 保存到本地文件
             with open(self.config_file, 'w', encoding='utf-8') as f:
                 json.dump(self.group_configs, f, ensure_ascii=False, indent=2)
-        except OSError as e:
+            
+            # 尝试同步到 WebUI 配置（AstrBot 的 template_list 格式）
+            template_list = self._convert_dict_to_template_list(self.group_configs)
+            self.config["group_configs"] = template_list
+            
+            # 尝试调用配置保存方法（AstrBotConfig 支持 save_config）
+            if hasattr(self.config, 'save_config'):
+                self.config.save_config()
+                logger.info(f"已同步 {len(self.group_configs)} 个群组配置到 WebUI")
+            else:
+                logger.info(f"已保存 {len(self.group_configs)} 个群组配置到本地文件（WebUI 同步不可用）")
+        except Exception as e:
             logger.error(f"保存群配置失败: {e}")
 
     def _load_all_question_banks(self):
@@ -85,6 +180,49 @@ class WelcomeVerificationPlugin(Star):
             self.group_configs[gid] = {}
         self.group_configs[gid]["question_bank"] = bank_name
         self._save_group_configs()
+
+    def _get_group_welcome_config(self, group_id: str) -> dict:
+        gid = str(group_id)
+        return self.group_configs.get(gid, {}).get("welcome", {})
+
+    def _set_group_welcome_text(self, group_id: str, text: Optional[str]):
+        gid = str(group_id)
+        if gid not in self.group_configs:
+            self.group_configs[gid] = {}
+        if "welcome" not in self.group_configs[gid]:
+            self.group_configs[gid]["welcome"] = {}
+        if text:
+            self.group_configs[gid]["welcome"]["text"] = text
+        else:
+            self.group_configs[gid]["welcome"].pop("text", None)
+        self._save_group_configs()
+
+    def _set_group_welcome_image(self, group_id: str, image_path: Optional[str]):
+        gid = str(group_id)
+        if gid not in self.group_configs:
+            self.group_configs[gid] = {}
+        if "welcome" not in self.group_configs[gid]:
+            self.group_configs[gid]["welcome"] = {}
+        if image_path:
+            self.group_configs[gid]["welcome"]["image"] = image_path
+        else:
+            self.group_configs[gid]["welcome"].pop("image", None)
+        self._save_group_configs()
+
+    def _set_group_welcome_image_enabled(self, group_id: str, enabled: bool):
+        gid = str(group_id)
+        if gid not in self.group_configs:
+            self.group_configs[gid] = {}
+        if "welcome" not in self.group_configs[gid]:
+            self.group_configs[gid]["welcome"] = {}
+        self.group_configs[gid]["welcome"]["enable_image"] = enabled
+        self._save_group_configs()
+
+    def _reset_group_welcome_config(self, group_id: str):
+        gid = str(group_id)
+        if gid in self.group_configs:
+            self.group_configs[gid].pop("welcome", None)
+            self._save_group_configs()
 
     async def _get_question_for_group(self, group_id: int | str) -> Tuple[str, any]:
         bank_name = self._get_group_question_bank(str(group_id))
@@ -165,6 +303,93 @@ class WelcomeVerificationPlugin(Star):
             await event.send(event.plain_result(f"已切换题库为 {bank_name}，共 {len(self.question_banks[bank_name])} 道题"))
             return
 
+    async def _handle_welcome_command(self, event: AstrMessageEvent):
+        msg = event.message_str.strip()
+        if not self._match_command(msg, "welcome"):
+            return
+        if not event.message_obj.group_id:
+            await event.send(event.plain_result("该命令仅在群聊中可用"))
+            return
+        
+        parts = msg.split(maxsplit=2)
+        group_id = str(event.message_obj.group_id)
+        sender_id = event.get_sender_id()
+
+        owner, admins = await self._get_group_owner_and_admins(event, group_id)
+        is_admin = (owner == sender_id) or (sender_id in admins)
+        
+        if len(parts) < 2:
+            # 显示当前配置
+            welcome_config = self._get_group_welcome_config(group_id)
+            has_custom = bool(welcome_config)
+            if has_custom:
+                text = welcome_config.get("text", "未设置（使用全局配置）")
+                enable_image = welcome_config.get("enable_image", "未设置（使用全局配置）")
+                image = welcome_config.get("image", "未设置（使用全局配置）")
+                help_msg = (
+                    f"当前群组欢迎配置：\n"
+                    f"欢迎文本: {text}\n"
+                    f"启用图片: {enable_image}\n"
+                    f"图片路径: {image}\n\n"
+                    f"命令列表：\n"
+                    f"welcome text <内容> - 设置欢迎文本\n"
+                    f"welcome image <路径/URL> - 设置欢迎图片\n"
+                    f"welcome image on/off - 启用/禁用图片\n"
+                    f"welcome reset - 重置为全局配置"
+                )
+            else:
+                help_msg = (
+                    "当前使用全局欢迎配置\n\n"
+                    "命令列表：\n"
+                    "welcome text <内容> - 设置欢迎文本\n"
+                    "welcome image <路径/URL> - 设置欢迎图片\n"
+                    "welcome image on/off - 启用/禁用图片\n"
+                    "welcome reset - 重置为全局配置"
+                )
+            await event.send(event.plain_result(help_msg))
+            return
+        
+        subcmd = parts[1].lower()
+        
+        if subcmd == "text":
+            if not is_admin:
+                await event.send(event.plain_result("只有管理员或群主可以修改配置"))
+                return
+            if len(parts) < 3:
+                await event.send(event.plain_result("请指定欢迎文本内容"))
+                return
+            welcome_text = parts[2]
+            self._set_group_welcome_text(group_id, welcome_text)
+            await event.send(event.plain_result(f"已设置欢迎文本：{welcome_text}"))
+            return
+            
+        elif subcmd == "image":
+            if not is_admin:
+                await event.send(event.plain_result("只有管理员或群主可以修改配置"))
+                return
+            if len(parts) < 3:
+                await event.send(event.plain_result("请指定图片路径/URL，或使用 on/off 开关"))
+                return
+            image_param = parts[2]
+            if image_param == "on":
+                self._set_group_welcome_image_enabled(group_id, True)
+                await event.send(event.plain_result("已启用欢迎图片"))
+            elif image_param == "off":
+                self._set_group_welcome_image_enabled(group_id, False)
+                await event.send(event.plain_result("已禁用欢迎图片"))
+            else:
+                self._set_group_welcome_image(group_id, image_param)
+                await event.send(event.plain_result(f"已设置欢迎图片：{image_param}"))
+            return
+            
+        elif subcmd == "reset":
+            if not is_admin:
+                await event.send(event.plain_result("只有管理员或群主可以修改配置"))
+                return
+            self._reset_group_welcome_config(group_id)
+            await event.send(event.plain_result("已重置为全局配置"))
+            return
+
     @filter.event_message_type(filter.EventMessageType.ALL)
     async def on_event(self, event: AstrMessageEvent):
         if event.get_platform_name() != "aiocqhttp":
@@ -207,6 +432,7 @@ class WelcomeVerificationPlugin(Star):
 
     async def _handle_message_event(self, event: AstrMessageEvent):
         await self._handle_wv_command(event)
+        await self._handle_welcome_command(event)
         await self._check_answer(event)
         await self._handle_pass_command(event)
         await self._handle_kick_command(event)
@@ -228,9 +454,14 @@ class WelcomeVerificationPlugin(Star):
             return False
 
     async def _send_welcome_with_id(self, event: AstrMessageEvent, user_id: str, user_name: str):
-        welcome_text = self.config.get("welcome_text", "欢迎 {user_name} 加入本群！").format(user_name=user_name)
-        enable_image = self.config.get("enable_welcome_image", True)
-        image_path = self.config.get("welcome_image", "")
+        group_id = str(event.message_obj.group_id)
+        group_welcome_config = self._get_group_welcome_config(group_id)
+        
+        # 优先使用群组特定配置，否则使用全局配置
+        welcome_text = group_welcome_config.get("text", self.config.get("welcome_text", "欢迎 {user_name} 加入本群！")).format(user_name=user_name)
+        enable_image = group_welcome_config.get("enable_image", self.config.get("enable_welcome_image", True))
+        image_path = group_welcome_config.get("image", self.config.get("welcome_image", ""))
+        
         chain = [At(qq=user_id), Plain(" " + welcome_text)]
         if enable_image and image_path:
             if image_path.startswith(("http://", "https://")):
@@ -551,9 +782,11 @@ class WelcomeVerificationPlugin(Star):
             return
 
         group_id = event.message_obj.group_id
+        sender_id = event.get_sender_id()
+        
+        # 权限检查：只有管理员或群主可以使用
         owner, admins = await self._get_group_owner_and_admins(event, group_id)
-        sender = event.get_sender_id()
-        is_admin = (owner == sender) or (sender in admins)
+        is_admin = (owner == sender_id) or (sender_id in admins)
         if not is_admin:
             await event.send(event.plain_result("只有管理员或群主可以使用此命令"))
             return
@@ -565,16 +798,25 @@ class WelcomeVerificationPlugin(Star):
             return
 
         target_id = at_targets[0]
+        
+        # 防止踢出自己
+        if target_id == sender_id:
+            await event.send(event.plain_result("不能踢出自己"))
+            return
+            
         key = f"{group_id}:{target_id}"
         
+        # 清理该用户相关的验证状态（如果存在）
         async with self._lock:
+            # 清理待决策状态
             state = self.user_states.get(key)
             if state and state.get("pending_decision"):
                 self.user_states.pop(key, None)
+            # 取消二级验证任务
             task = self.secondary_tasks.pop(key, None)
             if task and not task.done():
                 task.cancel()
-            # 同时取消可能存在的超时踢人任务
+            # 取消超时踢人任务
             timeout_task = self.timeout_kick_tasks.pop(key, None)
             if timeout_task and not timeout_task.done():
                 timeout_task.cancel()

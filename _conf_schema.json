@@ -1,6 +1,6 @@
 {
     "welcome_text": {
-        "description": "欢迎文本，支持 {user_name} 变量",
+        "description": "全局欢迎文本，支持 {user_name} 变量",
         "type": "string",
         "default": "欢迎 {user_name} 加入本群！"
     },
@@ -13,6 +13,45 @@
         "description": "欢迎图片路径（本地绝对路径或http/https链接）",
         "type": "string",
         "default": "https://t.alcy.cc/moe"
+    },
+    "group_configs": {
+        "description": "群组自定义配置（可在列表中添加、编辑、删除群组配置）",
+        "type": "template_list",
+        "default": [],
+        "templates": {
+            "group_config": {
+                "name": "群组配置",
+                "hint": "为指定群组设置独立的欢迎文本和图片",
+                "items": {
+                    "group_id": {
+                        "description": "群组ID（群号）",
+                        "type": "string",
+                        "hint": "输入群号，如：123456789"
+                    },
+                    "welcome_text": {
+                        "description": "欢迎文本（留空使用全局）",
+                        "type": "string",
+                        "hint": "支持 {user_name} 变量，留空则使用全局配置"
+                    },
+                    "enable_welcome_image": {
+                        "description": "启用欢迎图片",
+                        "type": "bool",
+                        "hint": "是否发送欢迎图片，留空继承全局设置",
+                        "default": null
+                    },
+                    "welcome_image": {
+                        "description": "欢迎图片URL/路径（留空使用全局）",
+                        "type": "string",
+                        "hint": "本地路径或网络URL，留空则使用全局配置"
+                    },
+                    "question_bank": {
+                        "description": "自定义题库文件名（留空使用全局）",
+                        "type": "string",
+                        "hint": "如：math.json，留空则使用全局题库或自动生成"
+                    }
+                }
+            }
+        }
     },
     "enable_verification": {
         "description": "是否开启入群验证",
