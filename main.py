@@ -15,7 +15,7 @@ from astrbot.core.star.star_tools import StarTools
     "astrbot_plugin_welcome_verification",
     "月凌",
     "入群欢迎与验证插件，支持群组自定义配置",
-    "2.7.0",
+    "2.8.0",
     repo="https://github.com/oujunhaoyueling/astrbot_plugin_welcome_verification"
 )
 class WelcomeVerificationPlugin(Star):
@@ -25,6 +25,7 @@ class WelcomeVerificationPlugin(Star):
         self.user_states: Dict[str, dict] = {}
         self.secondary_tasks: Dict[str, asyncio.Task] = {}
         self.timeout_kick_tasks: Dict[str, asyncio.Task] = {}
+        self.verification_tasks: Dict[str, asyncio.Task] = {}
         self._lock = asyncio.Lock()
         self._kicking_users: Set[str] = set()  # 防止重复踢人
 
@@ -253,25 +254,38 @@ class WelcomeVerificationPlugin(Star):
         if not event.message_obj.group_id:
             await event.send(event.plain_result("该命令仅在群聊中可用"))
             return
-        parts = msg.split()
-        if len(parts) < 2:
-            help_text = (
-                "题库管理命令：\n"
-                "wv ls - 查看可用题库\n"
-                "wv <文件名> - 切换题库（仅管理员/群主）\n"
-                "wv default - 恢复随机生成（仅管理员/群主）\n"
-                "示例：wv math.json 或 wv math（自动补全 .json）"
-            )
-            await event.send(event.plain_result(help_text))
-            return
 
-        subcmd = parts[1].lower()
+        parts = msg.split()
         group_id = str(event.message_obj.group_id)
         sender_id = event.get_sender_id()
 
         owner, admins = await self._get_group_owner_and_admins(event, event.message_obj.group_id)
         is_admin = (owner == sender_id) or (sender_id in admins)
 
+        if len(parts) < 2:
+            help_text = (
+                "入群欢迎与验证 命令列表：\n\n"
+                "欢迎配置：\n"
+                "wv welcome - 查看当前欢迎配置\n"
+                "wv welcome text <内容> - 设置欢迎文本（仅管理员）\n"
+                "wv welcome image <路径> - 设置欢迎图片（仅管理员）\n"
+                "wv welcome image on/off - 启用/禁用图片（仅管理员）\n"
+                "wv welcome reset - 重置为全局配置（仅管理员）\n\n"
+                "题库管理：\n"
+                "wv ls - 查看可用题库\n"
+                "wv <文件名> - 切换题库（仅管理员，如 wv math.json，可省略 .json）\n"
+                "wv default - 恢复随机出题（仅管理员）\n\n"
+                "管理操作：\n"
+                "wv pass @用户 - 允许用户入群（仅管理员）\n"
+                "wv kick @用户 - 踢出用户（仅管理员）\n"
+                "wv cancel @用户 - 取消踢人（仅管理员）"
+            )
+            await event.send(event.plain_result(help_text))
+            return
+
+        subcmd = parts[1].lower()
+
+        # ── 题库管理 ──
         if subcmd == "ls":
             banks = list(self.question_banks.keys())
             if banks:
@@ -289,6 +303,187 @@ class WelcomeVerificationPlugin(Star):
             await event.send(event.plain_result("已恢复为随机生成题目"))
             return
 
+        # ── 欢迎配置 ──
+        elif subcmd == "welcome":
+            welcome_config = self._get_group_welcome_config(group_id)
+            has_custom = bool(welcome_config)
+
+            if len(parts) < 3:
+                if has_custom:
+                    text = welcome_config.get("text")
+                    if not text:
+                        text = self.config.get("welcome_text", "欢迎 {user_name} 加入本群！")
+                    enable_image = welcome_config.get("enable_image")
+                    if enable_image is None:
+                        enable_image = self.config.get("enable_welcome_image", True)
+                    image = welcome_config.get("image")
+                    if not image:
+                        image = self.config.get("welcome_image", "")
+                else:
+                    text = self.config.get("welcome_text", "欢迎 {user_name} 加入本群！")
+                    enable_image = self.config.get("enable_welcome_image", True)
+                    image = self.config.get("welcome_image", "")
+
+                image_status = "已启用" if enable_image else "已禁用"
+                help_msg = (
+                    f"当前欢迎配置：\n"
+                    f"欢迎文本: {text}\n"
+                    f"启用图片: {image_status}\n"
+                    f"图片路径: {image or '（无）'}\n"
+                    f"{'（使用群组自定义配置）' if has_custom else '（使用全局配置）'}\n\n"
+                    f"子命令：\n"
+                    f"wv welcome text <内容> - 设置欢迎文本\n"
+                    f"wv welcome image <路径/URL> - 设置欢迎图片\n"
+                    f"wv welcome image on/off - 启用/禁用图片\n"
+                    f"wv welcome reset - 重置为全局配置"
+                )
+                await event.send(event.plain_result(help_msg))
+                return
+
+            subcmd2 = parts[2].lower()
+
+            if subcmd2 == "text":
+                if not is_admin:
+                    await event.send(event.plain_result("只有管理员或群主可以修改配置"))
+                    return
+                if len(parts) < 4:
+                    await event.send(event.plain_result("请指定欢迎文本内容"))
+                    return
+                welcome_text = msg.split(maxsplit=3)[3]
+                self._set_group_welcome_text(group_id, welcome_text)
+                await event.send(event.plain_result(f"已设置欢迎文本：{welcome_text}"))
+                return
+
+            elif subcmd2 == "image":
+                if not is_admin:
+                    await event.send(event.plain_result("只有管理员或群主可以修改配置"))
+                    return
+                if len(parts) < 4:
+                    await event.send(event.plain_result("请指定图片路径/URL，或使用 on/off 开关"))
+                    return
+                image_param = parts[3]
+                if image_param == "on":
+                    self._set_group_welcome_image_enabled(group_id, True)
+                    await event.send(event.plain_result("已启用欢迎图片"))
+                elif image_param == "off":
+                    self._set_group_welcome_image_enabled(group_id, False)
+                    await event.send(event.plain_result("已禁用欢迎图片"))
+                else:
+                    self._set_group_welcome_image(group_id, image_param)
+                    await event.send(event.plain_result(f"已设置欢迎图片：{image_param}"))
+                return
+
+            elif subcmd2 == "reset":
+                if not is_admin:
+                    await event.send(event.plain_result("只有管理员或群主可以修改配置"))
+                    return
+                self._reset_group_welcome_config(group_id)
+                await event.send(event.plain_result("已重置为全局配置"))
+                return
+
+            else:
+                await event.send(event.plain_result(f"未知子命令：{subcmd2}，请使用 wv welcome 查看帮助"))
+                return
+
+        # ── pass：允许入群 ──
+        elif subcmd == "pass":
+            if not is_admin:
+                await event.send(event.plain_result("只有管理员或群主可以使用此命令"))
+                return
+
+            at_targets = [str(comp.qq) for comp in event.message_obj.message if isinstance(comp, At)]
+            if not at_targets:
+                await event.send(event.plain_result("请指定要允许入群的用户，例如：wv pass @用户"))
+                return
+
+            target_id = at_targets[0]
+            key = f"{group_id}:{target_id}"
+
+            task_to_cancel = None
+            state_exists = False
+            async with self._lock:
+                state = self.user_states.get(key)
+                if state and state.get("pending_decision"):
+                    state_exists = True
+                    self.user_states.pop(key, None)
+                    task_to_cancel = self.secondary_tasks.pop(key, None)
+
+            if not state_exists:
+                await event.send(event.plain_result("该用户没有等待审批的验证请求"))
+                return
+
+            if task_to_cancel and not task_to_cancel.done():
+                task_to_cancel.cancel()
+
+            success_msg = self.config.get("pass_success_message", "已允许该用户入群")
+            await event.send(event.plain_result(success_msg))
+            try:
+                await event.send(event.chain_result([At(qq=target_id), Plain(" 管理员已允许您入群")]))
+            except Exception:
+                pass
+            return
+
+        # ── kick：踢出用户 ──
+        elif subcmd == "kick":
+            if not is_admin:
+                await event.send(event.plain_result("只有管理员或群主可以使用此命令"))
+                return
+
+            at_targets = [str(comp.qq) for comp in event.message_obj.message if isinstance(comp, At)]
+            if not at_targets:
+                await event.send(event.plain_result("请指定要踢出的用户，例如：wv kick @用户"))
+                return
+
+            target_id = at_targets[0]
+
+            if target_id == sender_id:
+                await event.send(event.plain_result("不能踢出自己"))
+                return
+
+            key = f"{group_id}:{target_id}"
+
+            tasks_to_cancel = []
+            async with self._lock:
+                self.user_states.pop(key, None)
+                for task_dict in [self.secondary_tasks, self.timeout_kick_tasks, self.verification_tasks]:
+                    t = task_dict.pop(key, None)
+                    if t and not t.done():
+                        tasks_to_cancel.append(t)
+
+            for t in tasks_to_cancel:
+                t.cancel()
+
+            kick_success = await self._kick_user(event, target_id)
+            if kick_success:
+                success_msg = self.config.get("kick_success_message", "已移出该用户")
+                await event.send(event.plain_result(success_msg))
+            return
+
+        # ── cancel：取消踢人 ──
+        elif subcmd == "cancel":
+            if not is_admin:
+                await event.send(event.plain_result("只有管理员或群主可以取消踢人"))
+                return
+
+            at_targets = [str(comp.qq) for comp in event.message_obj.message if isinstance(comp, At)]
+            if not at_targets:
+                await event.send(event.plain_result("请指定要取消踢人的用户，例如：wv cancel @用户"))
+                return
+
+            target_id = at_targets[0]
+            key = f"{group_id}:{target_id}"
+            task_to_cancel = None
+            async with self._lock:
+                task_to_cancel = self.timeout_kick_tasks.pop(key, None)
+
+            if task_to_cancel and not task_to_cancel.done():
+                task_to_cancel.cancel()
+                await event.send(event.plain_result("已取消踢人操作"))
+            else:
+                await event.send(event.plain_result("该用户没有等待踢人的任务"))
+            return
+
+        # ── 切换题库 ──
         else:
             if not is_admin:
                 await event.send(event.plain_result("只有管理员或群主可以切换题库"))
@@ -301,93 +496,6 @@ class WelcomeVerificationPlugin(Star):
                 return
             self._set_group_question_bank(group_id, bank_name)
             await event.send(event.plain_result(f"已切换题库为 {bank_name}，共 {len(self.question_banks[bank_name])} 道题"))
-            return
-
-    async def _handle_welcome_command(self, event: AstrMessageEvent):
-        msg = event.message_str.strip()
-        if not self._match_command(msg, "welcome"):
-            return
-        if not event.message_obj.group_id:
-            await event.send(event.plain_result("该命令仅在群聊中可用"))
-            return
-        
-        parts = msg.split(maxsplit=2)
-        group_id = str(event.message_obj.group_id)
-        sender_id = event.get_sender_id()
-
-        owner, admins = await self._get_group_owner_and_admins(event, group_id)
-        is_admin = (owner == sender_id) or (sender_id in admins)
-        
-        if len(parts) < 2:
-            # 显示当前配置
-            welcome_config = self._get_group_welcome_config(group_id)
-            has_custom = bool(welcome_config)
-            if has_custom:
-                text = welcome_config.get("text", "未设置（使用全局配置）")
-                enable_image = welcome_config.get("enable_image", "未设置（使用全局配置）")
-                image = welcome_config.get("image", "未设置（使用全局配置）")
-                help_msg = (
-                    f"当前群组欢迎配置：\n"
-                    f"欢迎文本: {text}\n"
-                    f"启用图片: {enable_image}\n"
-                    f"图片路径: {image}\n\n"
-                    f"命令列表：\n"
-                    f"welcome text <内容> - 设置欢迎文本\n"
-                    f"welcome image <路径/URL> - 设置欢迎图片\n"
-                    f"welcome image on/off - 启用/禁用图片\n"
-                    f"welcome reset - 重置为全局配置"
-                )
-            else:
-                help_msg = (
-                    "当前使用全局欢迎配置\n\n"
-                    "命令列表：\n"
-                    "welcome text <内容> - 设置欢迎文本\n"
-                    "welcome image <路径/URL> - 设置欢迎图片\n"
-                    "welcome image on/off - 启用/禁用图片\n"
-                    "welcome reset - 重置为全局配置"
-                )
-            await event.send(event.plain_result(help_msg))
-            return
-        
-        subcmd = parts[1].lower()
-        
-        if subcmd == "text":
-            if not is_admin:
-                await event.send(event.plain_result("只有管理员或群主可以修改配置"))
-                return
-            if len(parts) < 3:
-                await event.send(event.plain_result("请指定欢迎文本内容"))
-                return
-            welcome_text = parts[2]
-            self._set_group_welcome_text(group_id, welcome_text)
-            await event.send(event.plain_result(f"已设置欢迎文本：{welcome_text}"))
-            return
-            
-        elif subcmd == "image":
-            if not is_admin:
-                await event.send(event.plain_result("只有管理员或群主可以修改配置"))
-                return
-            if len(parts) < 3:
-                await event.send(event.plain_result("请指定图片路径/URL，或使用 on/off 开关"))
-                return
-            image_param = parts[2]
-            if image_param == "on":
-                self._set_group_welcome_image_enabled(group_id, True)
-                await event.send(event.plain_result("已启用欢迎图片"))
-            elif image_param == "off":
-                self._set_group_welcome_image_enabled(group_id, False)
-                await event.send(event.plain_result("已禁用欢迎图片"))
-            else:
-                self._set_group_welcome_image(group_id, image_param)
-                await event.send(event.plain_result(f"已设置欢迎图片：{image_param}"))
-            return
-            
-        elif subcmd == "reset":
-            if not is_admin:
-                await event.send(event.plain_result("只有管理员或群主可以修改配置"))
-                return
-            self._reset_group_welcome_config(group_id)
-            await event.send(event.plain_result("已重置为全局配置"))
             return
 
     @filter.event_message_type(filter.EventMessageType.ALL)
@@ -428,29 +536,21 @@ class WelcomeVerificationPlugin(Star):
 
         if self.config.get("enable_verification", True):
             has_permission = await self._check_bot_admin(event, group_id)
-            asyncio.create_task(self._start_verification(event, user_id, group_id, has_permission))
+            task = asyncio.create_task(self._start_verification(event, user_id, group_id, has_permission))
+            task.add_done_callback(lambda t: self._check_task_exception(t, f"验证任务 {group_id}:{user_id}"))
+            async with self._lock:
+                self.verification_tasks[f"{group_id}:{user_id}"] = task
 
     async def _handle_message_event(self, event: AstrMessageEvent):
         await self._handle_wv_command(event)
-        await self._handle_welcome_command(event)
         await self._check_answer(event)
-        await self._handle_pass_command(event)
-        await self._handle_kick_command(event)
-        await self._check_cancel_command(event)
 
     async def _is_member_in_group(self, event: AstrMessageEvent, group_id: int | str, user_id: str) -> bool:
-        if event.get_platform_name() != "aiocqhttp":
-            return False
         try:
-            result = await event.bot.api.call_action('get_group_member_list', group_id=int(group_id))
-            if not result or not isinstance(result, list):
-                return False
-            for member in result:
-                if str(member.get('user_id')) == user_id:
-                    return True
-            return False
+            result = await event.bot.api.call_action('get_group_member_info', group_id=int(group_id), user_id=int(user_id))
+            return result is not None and isinstance(result, dict)
         except Exception as e:
-            logger.error(f"检查群成员存在性失败: {e}")
+            logger.debug(f"检查群成员存在性失败: {e}")
             return False
 
     async def _send_welcome_with_id(self, event: AstrMessageEvent, user_id: str, user_name: str):
@@ -495,52 +595,69 @@ class WelcomeVerificationPlugin(Star):
         attempts = 0
         key = f"{group_id}:{user_id}"
 
-        while attempts < max_attempts:
-            question, answer = await self._get_question_for_group(group_id)
-            question_text = self.config.get("verification_question_format", "请回答：{question} = ?").format(question=question)
-            await event.send(event.chain_result([At(qq=user_id), Plain(" " + question_text)]))
-
-            future = asyncio.get_event_loop().create_future()
-            expire_time = asyncio.get_event_loop().time() + timeout
-
-            async with self._lock:
-                self.user_states[key] = {
-                    "group_id": group_id,
-                    "user_id": user_id,
-                    "attempts": attempts,
-                    "expire_time": expire_time,
-                    "current_answer": answer,
-                    "future": future
-                }
-
-            try:
-                is_correct = await asyncio.wait_for(future, timeout)
-                if is_correct:
-                    await event.send(event.plain_result(self.config.get("verification_correct_message", "验证通过，欢迎入群！")))
-                    async with self._lock:
-                        self.user_states.pop(key, None)
+        try:
+            while attempts < max_attempts:
+                question, answer = await self._get_question_for_group(group_id)
+                question_text = self.config.get("verification_question_format", "请回答：{question} = ?").format(question=question)
+                try:
+                    await event.send(event.chain_result([At(qq=user_id), Plain(" " + question_text)]))
+                except Exception as e:
+                    logger.warning(f"发送验证问题失败: {e}")
                     return
-                else:
+
+                future = asyncio.get_event_loop().create_future()
+                expire_time = asyncio.get_event_loop().time() + timeout
+
+                async with self._lock:
+                    self.user_states[key] = {
+                        "group_id": group_id,
+                        "user_id": user_id,
+                        "attempts": attempts,
+                        "expire_time": expire_time,
+                        "current_answer": answer,
+                        "future": future
+                    }
+
+                try:
+                    is_correct = await asyncio.wait_for(future, timeout)
+                    if is_correct:
+                        try:
+                            await event.send(event.plain_result(self.config.get("verification_correct_message", "验证通过，欢迎入群！")))
+                        except Exception:
+                            pass
+                        async with self._lock:
+                            self.user_states.pop(key, None)
+                        return
+                    else:
+                        attempts += 1
+                        remaining = max_attempts - attempts
+                        if remaining > 0:
+                            msg = self.config.get("verification_failed_message", "答案错误，您还有 {remaining} 次机会。").format(remaining=remaining)
+                            try:
+                                await event.send(event.plain_result(msg))
+                            except Exception:
+                                pass
+                        else:
+                            await self._handle_verification_failed(event, user_id, group_id, has_permission)
+                            return
+                except asyncio.TimeoutError:
                     attempts += 1
                     remaining = max_attempts - attempts
                     if remaining > 0:
-                        msg = self.config.get("verification_failed_message", "答案错误，您还有 {remaining} 次机会。").format(remaining=remaining)
-                        await event.send(event.plain_result(msg))
+                        try:
+                            await event.send(event.plain_result(f"验证超时，您还有 {remaining} 次机会"))
+                        except Exception:
+                            pass
                     else:
                         await self._handle_verification_failed(event, user_id, group_id, has_permission)
                         return
-            except asyncio.TimeoutError:
-                attempts += 1
-                remaining = max_attempts - attempts
-                if remaining > 0:
-                    await event.send(event.plain_result(f"验证超时，您还有 {remaining} 次机会"))
-                else:
-                    await self._handle_verification_failed(event, user_id, group_id, has_permission)
-                    return
-            finally:
-                async with self._lock:
-                    if key in self.user_states:
-                        self.user_states[key].pop("future", None)
+                finally:
+                    async with self._lock:
+                        if key in self.user_states:
+                            self.user_states[key].pop("future", None)
+        finally:
+            async with self._lock:
+                self.verification_tasks.pop(key, None)
 
     async def _handle_verification_failed(self, event: AstrMessageEvent, user_id: str, group_id: int | str, has_permission: bool):
         user_name = await self._get_user_display_name(event, user_id, group_id)
@@ -594,8 +711,8 @@ class WelcomeVerificationPlugin(Star):
             "{kick_cmd} @用户 - 移出群聊\n"
             "超时时间 {timeout} 秒。"
         )
-        pass_cmd = self.config.get("pass_command", "/pass").lstrip('/')
-        kick_cmd = self.config.get("kick_command", "/kick").lstrip('/')
+        pass_cmd = "wv pass"
+        kick_cmd = "wv kick"
         timeout_sec = self.config.get("secondary_verification_timeout", 60)
 
         prompt = prompt_template.format(
@@ -710,10 +827,11 @@ class WelcomeVerificationPlugin(Star):
 
             if future and not future.done():
                 if isinstance(correct_answer, int):
-                    if user_input.isdigit():
+                    try:
+                        user_answer = int(user_input)
                         future_to_set = future
-                        is_correct = int(user_input) == correct_answer
-                    else:
+                        is_correct = user_answer == correct_answer
+                    except ValueError:
                         send_prompt = True
                 else:
                     future_to_set = future
@@ -724,107 +842,6 @@ class WelcomeVerificationPlugin(Star):
 
         if future_to_set is not None:
             future_to_set.set_result(is_correct)
-
-    async def _handle_pass_command(self, event: AstrMessageEvent):
-        if not event.message_obj.group_id:
-            return
-        
-        msg = event.message_str.strip()
-        pass_cmd = self.config.get("pass_command", "/pass")
-        
-        if not self._match_command(msg, pass_cmd):
-            return
-
-        group_id = event.message_obj.group_id
-        owner, admins = await self._get_group_owner_and_admins(event, group_id)
-        sender = event.get_sender_id()
-        is_admin = (owner == sender) or (sender in admins)
-        if not is_admin:
-            await event.send(event.plain_result("只有管理员或群主可以使用此命令"))
-            return
-
-        at_targets = [str(comp.qq) for comp in event.message_obj.message if isinstance(comp, At)]
-        if not at_targets:
-            detected_cmd = pass_cmd.lstrip('/')
-            await event.send(event.plain_result(f"请指定要允许入群的用户，例如：{detected_cmd} @用户"))
-            return
-
-        target_id = at_targets[0]
-        key = f"{group_id}:{target_id}"
-        
-        async with self._lock:
-            state = self.user_states.get(key)
-            if not state or not state.get("pending_decision"):
-                await event.send(event.plain_result("该用户没有等待审批的验证请求"))
-                return
-            
-            self.user_states.pop(key, None)
-            task = self.secondary_tasks.pop(key, None)
-            if task and not task.done():
-                task.cancel()
-
-        success_msg = self.config.get("pass_success_message", "已允许该用户入群")
-        await event.send(event.plain_result(success_msg))
-        
-        try:
-            await event.send(event.chain_result([At(qq=target_id), Plain(" 管理员已允许您入群")]))
-        except Exception:
-            pass
-
-    async def _handle_kick_command(self, event: AstrMessageEvent):
-        if not event.message_obj.group_id:
-            return
-            
-        msg = event.message_str.strip()
-        kick_cmd = self.config.get("kick_command", "/kick")
-        
-        if not self._match_command(msg, kick_cmd):
-            return
-
-        group_id = event.message_obj.group_id
-        sender_id = event.get_sender_id()
-        
-        # 权限检查：只有管理员或群主可以使用
-        owner, admins = await self._get_group_owner_and_admins(event, group_id)
-        is_admin = (owner == sender_id) or (sender_id in admins)
-        if not is_admin:
-            await event.send(event.plain_result("只有管理员或群主可以使用此命令"))
-            return
-
-        at_targets = [str(comp.qq) for comp in event.message_obj.message if isinstance(comp, At)]
-        if not at_targets:
-            detected_cmd = kick_cmd.lstrip('/')
-            await event.send(event.plain_result(f"请指定要踢出的用户，例如：{detected_cmd} @用户"))
-            return
-
-        target_id = at_targets[0]
-        
-        # 防止踢出自己
-        if target_id == sender_id:
-            await event.send(event.plain_result("不能踢出自己"))
-            return
-            
-        key = f"{group_id}:{target_id}"
-        
-        # 清理该用户相关的验证状态（如果存在）
-        async with self._lock:
-            # 清理待决策状态
-            state = self.user_states.get(key)
-            if state and state.get("pending_decision"):
-                self.user_states.pop(key, None)
-            # 取消二级验证任务
-            task = self.secondary_tasks.pop(key, None)
-            if task and not task.done():
-                task.cancel()
-            # 取消超时踢人任务
-            timeout_task = self.timeout_kick_tasks.pop(key, None)
-            if timeout_task and not timeout_task.done():
-                timeout_task.cancel()
-                
-        kick_success = await self._kick_user(event, target_id)
-        if kick_success:
-            success_msg = self.config.get("kick_success_message", "已移出该用户")
-            await event.send(event.plain_result(success_msg))
 
     async def _get_group_owner_and_admins(self, event: AstrMessageEvent, group_id: int | str) -> Tuple[Optional[str], List[str]]:
         if event.get_platform_name() != "aiocqhttp":
@@ -880,7 +897,7 @@ class WelcomeVerificationPlugin(Star):
             "用户 {user_name} 验证失败，将在 {delay} 秒后被移出群聊。如需取消，请管理员发送：{cancel_command} @用户(有空格)"
         )
 
-        cancel_cmd = self.config.get("timeout_kick_cancel_command", "/cancel_kick").lstrip('/')
+        cancel_cmd = "wv cancel"
         warning_msg = warning_template.format(
             user_name=user_name,
             delay=delay,
@@ -936,40 +953,6 @@ class WelcomeVerificationPlugin(Star):
             logger.error(f"检查机器人权限失败: {e}")
             return False
 
-    async def _check_cancel_command(self, event: AstrMessageEvent):
-        if not event.message_obj.group_id:
-            return
-
-        msg = event.message_str.strip()
-        cancel_cmd = self.config.get("timeout_kick_cancel_command", "/cancel_kick")
-        
-        if not self._match_command(msg, cancel_cmd):
-            return
-
-        group_id = event.message_obj.group_id
-        owner, admins = await self._get_group_owner_and_admins(event, group_id)
-        sender = event.get_sender_id()
-        is_admin = (owner == sender) or (sender in admins)
-        if not is_admin:
-            await event.send(event.plain_result("只有管理员或群主可以取消踢人"))
-            return
-
-        at_targets = [str(comp.qq) for comp in event.message_obj.message if isinstance(comp, At)]
-        if not at_targets:
-            detected_cmd = cancel_cmd.lstrip('/')
-            await event.send(event.plain_result(f"请指定要取消踢人的用户，例如：{detected_cmd} @用户"))
-            return
-
-        target_id = at_targets[0]
-        key = f"{group_id}:{target_id}"
-        async with self._lock:
-            task = self.timeout_kick_tasks.get(key)
-            if task and not task.done():
-                task.cancel()
-                await event.send(event.plain_result("已取消踢人操作"))
-            else:
-                await event.send(event.plain_result("该用户没有等待踢人的任务"))
-
     async def _kick_user(self, event: AstrMessageEvent, user_id: str, group_id: int | str | None = None) -> bool:
         if event.get_platform_name() != "aiocqhttp":
             logger.warning(f"当前平台不支持踢人操作，无法移出用户 {user_id}")
@@ -1001,54 +984,31 @@ class WelcomeVerificationPlugin(Star):
             self._kicking_users.discard(key)
 
     def _generate_question(self):
-        operators = ['+', '-', '*']
-        for _ in range(100):
-            op1 = random.choice(operators)
-            op2 = random.choice(operators)
-            if op1 == '*' or op2 == '*':
-                a = random.randint(1, 10)
-                b = random.randint(1, 10)
-                c = random.randint(1, 10)
+        while True:
+            op = random.choice(['+', '-', '*'])
+            if op == '*':
+                a, b = random.randint(1, 9), random.randint(1, 9)
             else:
-                a = random.randint(0, 50)
-                b = random.randint(0, 50)
-                c = random.randint(0, 50)
+                a, b = random.randint(0, 50), random.randint(0, 50)
 
-            try:
-                if op1 == '+':
-                    part1 = a + b
-                elif op1 == '-':
-                    part1 = a - b
-                else:
-                    part1 = a * b
+            if op == '+':
+                result = a + b
+            elif op == '-':
+                result = a - b
+            else:
+                result = a * b
 
-                if op2 == '+':
-                    result = part1 + c
-                elif op2 == '-':
-                    result = part1 - c
-                else:
-                    result = part1 * c
-
-                if 0 <= result <= 100:
-                    expr = f"{a} {op1} {b} {op2} {c}"
-                    return expr, result
-            except (TypeError, ValueError, ArithmeticError):
-                continue
-        a = random.randint(0, 50)
-        b = random.randint(0, 50)
-        return f"{a} + {b}", a + b
+            if 0 <= result <= 100:
+                return f"{a} {op} {b}", result
 
     async def terminate(self):
         logger.info(f"开始清理插件 {self.name}")
         async with self._lock:
-            for task in self.secondary_tasks.values():
-                if not task.done():
-                    task.cancel()
-            self.secondary_tasks.clear()
-            for task in self.timeout_kick_tasks.values():
-                if not task.done():
-                    task.cancel()
-            self.timeout_kick_tasks.clear()
+            for tasks_dict in [self.secondary_tasks, self.timeout_kick_tasks, self.verification_tasks]:
+                for task in tasks_dict.values():
+                    if not task.done():
+                        task.cancel()
+                tasks_dict.clear()
             for state in self.user_states.values():
                 future = state.get("future")
                 if future and not future.done():
@@ -1056,3 +1016,7 @@ class WelcomeVerificationPlugin(Star):
             self.user_states.clear()
         await asyncio.sleep(0.5)
         logger.info(f"插件 {self.name} 已清理")
+
+    def _check_task_exception(self, task: asyncio.Task, name: str = ""):
+        if task.done() and task.exception():
+            logger.error(f"任务 {name} 异常: {task.exception()}")
