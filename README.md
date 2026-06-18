@@ -26,7 +26,7 @@
  
  ```
  
- cd data/plugins  git clone https://github.com/oujunhaoyueling/astrbot_plugin_welcome_verification.git
+ cd data/plugins  git clone https://github.com/qiyueling2716/astrbot_plugin_welcome_verification.git
  
  ```
 
