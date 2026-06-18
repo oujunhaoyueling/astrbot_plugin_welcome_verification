@@ -15,8 +15,8 @@ from astrbot.core.star.star_tools import StarTools
     "astrbot_plugin_welcome_verification",
     "月凌",
     "入群欢迎与验证插件，支持群组自定义配置",
-    "2.8.0",
-    repo="https://github.com/oujunhaoyueling/astrbot_plugin_welcome_verification"
+    "2.8.1",
+    repo="https://github.com/qiyueling2716/astrbot_plugin_welcome_verification"
 )
 class WelcomeVerificationPlugin(Star):
     def __init__(self, context: Context, config: dict):
