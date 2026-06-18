@@ -1,5 +1,3 @@
-# 此插件与 `meme_manager` 可能产生冲突，若此插件功能不可用，建议尝试更改插件启用顺序(先启用本插件)或使用 `表情包小偷` 等效替代 `meme_manager`
-
 > **⚠️ v2.8.0 迁移提醒**：所有命令统一为 `wv` 前缀。`/pass`、`/kick`、`/cancel_kick`、`welcome` 等旧命令已移除，请使用 `wv pass`、`wv kick`、`wv cancel`、`wv welcome` 替代。
  
 # AstrBot 入群欢迎与验证插件
