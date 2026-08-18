@@ -157,6 +157,23 @@ class WelcomeVerificationPlugin(Star):
         except Exception as e:
             logger.error(f"保存群配置失败: {e}")
 
+    def _save_config(self):
+        """保存 WebUI 配置（若可用）"""
+        try:
+            if hasattr(self.config, 'save_config'):
+                self.config.save_config()
+                logger.info("配置已保存到 WebUI")
+        except Exception as e:
+            logger.error(f"保存配置失败: {e}")
+
+    def _is_group_enabled(self, group_id: int | str) -> bool:
+        """判断是否对该群启用欢迎和验证（白名单模式）"""
+        if not self.config.get("enable_group_whitelist", False):
+            return True
+        whitelist = self.config.get("group_whitelist", [])
+        gid = str(group_id)
+        return gid in {str(g) for g in whitelist}
+
     def _load_all_question_banks(self):
         if not self.warehouse_dir.exists():
             return
@@ -278,7 +295,12 @@ class WelcomeVerificationPlugin(Star):
                 "管理操作：\n"
                 "wv pass @用户 - 允许用户入群（仅管理员）\n"
                 "wv kick @用户 - 踢出用户（仅管理员）\n"
-                "wv cancel @用户 - 取消踢人（仅管理员）"
+                "wv cancel @用户 - 取消踢人（仅管理员）\n\n"
+                "白名单管理：\n"
+                "wv whitelist - 查看白名单状态\n"
+                "wv whitelist on/off - 启用/禁用白名单模式（仅管理员）\n"
+                "wv whitelist add <群号> - 添加群到白名单（仅管理员）\n"
+                "wv whitelist remove <群号> - 从白名单移除群（仅管理员）"
             )
             await event.send(event.plain_result(help_text))
             return
@@ -483,6 +505,69 @@ class WelcomeVerificationPlugin(Star):
                 await event.send(event.plain_result("该用户没有等待踢人的任务"))
             return
 
+        # ── 白名单管理 ──
+        elif subcmd == "whitelist":
+            if not is_admin:
+                await event.send(event.plain_result("只有管理员或群主可以管理白名单"))
+                return
+
+            if len(parts) < 3:
+                enabled = self.config.get("enable_group_whitelist", False)
+                whitelist = self.config.get("group_whitelist", [])
+                groups = "\n".join(f"- {g}" for g in whitelist) if whitelist else "（空）"
+                status = "已启用" if enabled else "已禁用"
+                await event.send(event.plain_result(
+                    f"白名单模式: {status}\n"
+                    f"白名单群组:\n{groups}\n\n"
+                    f"子命令：\n"
+                    f"wv whitelist on/off - 启用/禁用白名单模式\n"
+                    f"wv whitelist add <群号> - 添加群到白名单\n"
+                    f"wv whitelist remove <群号> - 从白名单移除群"
+                ))
+                return
+
+            subcmd2 = parts[2].lower()
+
+            if subcmd2 == "on" or subcmd2 == "off":
+                self.config["enable_group_whitelist"] = (subcmd2 == "on")
+                self._save_config()
+                await event.send(event.plain_result(f"已{'启用' if subcmd2 == 'on' else '禁用'}白名单模式"))
+                return
+
+            elif subcmd2 == "add":
+                if len(parts) < 4:
+                    await event.send(event.plain_result("请指定要添加的群号，例如：wv whitelist add 123456789"))
+                    return
+                gid = parts[3]
+                whitelist = self.config.get("group_whitelist", [])
+                if gid in whitelist:
+                    await event.send(event.plain_result(f"群 {gid} 已在白名单中"))
+                    return
+                whitelist = list(whitelist) + [gid]
+                self.config["group_whitelist"] = whitelist
+                self._save_config()
+                await event.send(event.plain_result(f"已将群 {gid} 添加到白名单"))
+                return
+
+            elif subcmd2 == "remove":
+                if len(parts) < 4:
+                    await event.send(event.plain_result("请指定要移除的群号，例如：wv whitelist remove 123456789"))
+                    return
+                gid = parts[3]
+                whitelist = self.config.get("group_whitelist", [])
+                if gid not in whitelist:
+                    await event.send(event.plain_result(f"群 {gid} 不在白名单中"))
+                    return
+                whitelist = [g for g in whitelist if g != gid]
+                self.config["group_whitelist"] = whitelist
+                self._save_config()
+                await event.send(event.plain_result(f"已将群 {gid} 从白名单移除"))
+                return
+
+            else:
+                await event.send(event.plain_result(f"未知子命令：{subcmd2}，请使用 wv whitelist 查看帮助"))
+                return
+
         # ── 切换题库 ──
         else:
             if not is_admin:
@@ -528,6 +613,10 @@ class WelcomeVerificationPlugin(Star):
             await self._handle_message_event(event)
 
     async def _handle_group_increase(self, event: AstrMessageEvent, user_id: str, group_id: int | str):
+        if not self._is_group_enabled(group_id):
+            logger.info(f"群 {group_id} 不在白名单中，跳过欢迎和验证")
+            return
+
         user_name = await self._get_user_display_name(event, user_id, group_id)
 
         logger.info(f"新成员入群: {user_name}({user_id}) 进入群 {group_id}")

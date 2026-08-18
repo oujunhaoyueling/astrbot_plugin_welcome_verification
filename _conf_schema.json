@@ -53,6 +53,18 @@
             }
         }
     },
+    "enable_group_whitelist": {
+        "description": "是否启用群组白名单模式。启用后仅对白名单中的群组执行入群欢迎和验证，其他群组完全忽略",
+        "type": "bool",
+        "default": false
+    },
+    "group_whitelist": {
+        "description": "群组白名单（群号列表）。启用白名单模式后，仅这些群组会执行入群欢迎和验证",
+        "type": "list",
+        "item_type": "string",
+        "default": [],
+        "hint": "输入需要验证的群号，例如：123456789"
+    },
     "enable_verification": {
         "description": "是否开启入群验证",
         "type": "bool",
